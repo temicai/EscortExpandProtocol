@@ -1,0 +1,5 @@
+LIBRARY
+EXPORTS
+	EEP_Start @1
+	EEP_Stop @2
+	EEP_SetLogType @3
