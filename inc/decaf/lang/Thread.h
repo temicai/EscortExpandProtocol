@@ -72,13 +72,13 @@ namespace lang {
     public:
 
         /** The minimum priority that a thread can have. */
-        static const int MIN_PRIORITY = 1;
+        static const int LANG_MIN_PRIORITY = 1;
 
         /** The default priority that a thread is given at create time. */
-        static const int NORM_PRIORITY = 5;
+        static const int LANG_NORM_PRIORITY = 5;
 
         /** The maximum priority that a thread can have. */
-        static const int MAX_PRIORITY = 10;
+        static const int LANG_MAX_PRIORITY = 10;
 
         /** Represents the various states that the Thread can be in during its lifetime. */
         enum State {

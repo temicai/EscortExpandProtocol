@@ -64,14 +64,16 @@ namespace failover {
         FailoverTransportImpl(const FailoverTransportImpl&);
         FailoverTransportImpl& operator= (const FailoverTransportImpl&);
 
+    public:
+
         static const int DEFAULT_INITIAL_RECONNECT_DELAY;
         static const int INFINITE_WAIT;
 
     public:
 
-        bool closed;
-        bool connected;
-        bool started;
+        volatile bool closed;
+        volatile bool connected;
+        volatile bool started;
 
         long long timeout;
         long long initialReconnectDelay;
@@ -94,6 +96,7 @@ namespace failover {
         bool rebalanceUpdateURIs;
         bool priorityBackup;
         bool backupsEnabled;
+        volatile bool shutdown;
 
         bool doRebalance;
         bool connectedToPrioirty;
@@ -143,6 +146,7 @@ namespace failover {
             rebalanceUpdateURIs(true),
             priorityBackup(false),
             backupsEnabled(false),
+            shutdown(false),
             doRebalance(false),
             connectedToPrioirty(false),
             reconnectMutex(),
@@ -226,7 +230,7 @@ namespace failover {
                 try {
                     ioException = this->connectionFailure.dynamicCast<IOException>();
                 }
-                AMQ_CATCH_NOTHROW( ClassCastException)
+                AMQ_CATCH_NOTHROW(ClassCastException)
 
                 if (ioException != NULL) {
                     transportListener->onException(*this->connectionFailure);
@@ -249,7 +253,7 @@ namespace failover {
         }
 
         bool isConnectionStateValid() const {
-            return connectedTransport != NULL && !doRebalance && !this->backups->isPriorityBackupAvailable();
+            return connectedTransport != NULL && !doRebalance && !backups->isPriorityBackupAvailable();
         }
 
         void disconnect() {
@@ -269,9 +273,16 @@ namespace failover {
                     this->uris->addURI(*this->connectedTransportURI);
                     this->connectedTransportURI.reset(NULL);
                 }
+
+                if (transportListener != NULL) {
+                    transportListener->transportInterrupted();
+                }
             }
         }
 
+        bool willReconnect() {
+            return firstConnection || 0 != calculateReconnectAttemptLimit();
+        }
     };
 
     const int FailoverTransportImpl::DEFAULT_INITIAL_RECONNECT_DELAY = 10;
@@ -435,7 +446,9 @@ void FailoverTransport::oneway(const Pointer<Command> command) {
                     long long start = System::currentTimeMillis();
                     bool timedout = false;
 
-                    while (transport == NULL && !this->impl->closed && this->impl->connectionFailure == NULL) {
+                    while (transport == NULL && !this->impl->closed &&
+                           this->impl->connectionFailure == NULL && this->impl->willReconnect()) {
+
                         long long end = System::currentTimeMillis();
                         if (command->isMessage() && this->impl->timeout > 0 && (end - start > this->impl->timeout)) {
                             timedout = true;
@@ -455,6 +468,9 @@ void FailoverTransport::oneway(const Pointer<Command> command) {
                         } else if (timedout == true) {
                             error.reset(new IOException(__FILE__, __LINE__,
                                 "Failover timeout of %d ms reached.", this->impl->timeout));
+                        } else if (!this->impl->willReconnect()) {
+                            error.reset(new IOException(__FILE__, __LINE__,
+                                "Maximum reconnection attempts exceeded"));
                         } else {
                             error.reset(new IOException(__FILE__, __LINE__, "Unexpected failure."));
                         }
@@ -468,7 +484,7 @@ void FailoverTransport::oneway(const Pointer<Command> command) {
                     Pointer<Tracked> tracked;
                     try {
                         tracked = stateTracker.track(command);
-                        synchronized( &this->impl->requestMap ) {
+                        synchronized(&this->impl->requestMap) {
                             if (tracked != NULL && tracked->isWaitingForResponse()) {
                                 this->impl->requestMap.put(command->getCommandId(), tracked);
                             } else if (tracked == NULL && command->isResponseRequired()) {
@@ -485,13 +501,15 @@ void FailoverTransport::oneway(const Pointer<Command> command) {
                     try {
                         transport->oneway(command);
                         stateTracker.trackBack(command);
+                        if (command->isShutdownInfo()) {
+                            this->impl->shutdown = true;
+                        }
                     } catch (IOException& e) {
 
                         e.setMark(__FILE__, __LINE__);
 
-                        // If the command was not tracked.. we will retry in
-                        // this method
-                        if (tracked == NULL) {
+                        // If the command was not tracked.. we will retry in this method
+                        if (tracked == NULL && this->impl->canReconnect()) {
 
                             // since we will retry in this method.. take it out of the
                             // request map so that it is not sent 2 times on recovery
@@ -690,7 +708,17 @@ void FailoverTransport::restoreTransport(const Pointer<Transport> transport) {
 ////////////////////////////////////////////////////////////////////////////////
 void FailoverTransport::handleTransportFailure(const decaf::lang::Exception& error) {
 
+    if (this->impl->shutdown) {
+        // shutdown info sent and remote socket closed and we see that before a local close
+        // let the close do the work
+        return;
+    }
+
     synchronized(&this->impl->reconnectMutex) {
+
+        if (this->impl->shutdown) {
+            return;
+        }
 
         Pointer<Transport> transport;
         this->impl->connectedTransport.swap(transport);
@@ -829,12 +857,14 @@ void FailoverTransport::updateURIs(bool rebalance, const decaf::util::List<decaf
 bool FailoverTransport::isPending() const {
     bool result = false;
 
-    synchronized(&this->impl->reconnectMutex) {
-        if (!this->impl->isConnectionStateValid() && this->impl->started && !this->impl->isClosedOrFailed()) {
+    synchronized(&impl->reconnectMutex) {
+        if (!impl->isConnectionStateValid() && impl->started && !impl->isClosedOrFailed()) {
 
-            int maxReconnectAttempts = this->impl->calculateReconnectAttemptLimit();
+            int maxReconnectAttempts = impl->calculateReconnectAttemptLimit();
 
-            if (maxReconnectAttempts != -1 && this->impl->connectFailures >= maxReconnectAttempts) {
+            if (impl->firstConnection && impl->connectFailures == 0) {
+                result = true;
+            } else if (maxReconnectAttempts != -1 && impl->connectFailures > maxReconnectAttempts) {
                 result = false;
             } else {
                 result = true;
@@ -850,7 +880,7 @@ bool FailoverTransport::iterate() {
 
     Pointer<Exception> failure;
 
-    synchronized( &this->impl->reconnectMutex ) {
+    synchronized(&this->impl->reconnectMutex) {
 
         if (this->impl->isClosedOrFailed()) {
             this->impl->reconnectMutex.notifyAll();
@@ -862,7 +892,7 @@ bool FailoverTransport::iterate() {
 
             Pointer<URIPool> connectList = this->impl->getConnectList();
 
-            if (connectList->isEmpty()) {
+            if (connectList->isEmpty() && !impl->backups->isEnabled()) {
                 failure.reset(new IOException(__FILE__, __LINE__, "No URIs available for reconnect."));
             } else {
 
@@ -911,7 +941,7 @@ bool FailoverTransport::iterate() {
                     }
                 }
 
-                while (transport == NULL && this->impl->connectedTransport == NULL && !this->impl->closed) {
+                while ((transport != NULL || !connectList->isEmpty()) && this->impl->connectedTransport == NULL && !this->impl->closed) {
                     try {
                         // We could be starting the loop with a backup already.
                         if (transport == NULL) {
@@ -936,6 +966,7 @@ bool FailoverTransport::iterate() {
                         this->impl->connectedTransport = transport;
                         this->impl->reconnectMutex.notifyAll();
                         this->impl->connectFailures = 0;
+                        this->impl->connected = true;
 
                         if (isPriorityBackup()) {
                             this->impl->connectedToPrioirty = connectList->getPriorityURI().equals(uri) ||
@@ -984,6 +1015,7 @@ bool FailoverTransport::iterate() {
                             // this prevents a deadlock from occurring if the Transport happens
                             // to call back through our onException method or locks in some other
                             // way.
+                            this->impl->connected = false;
                             this->impl->closeTask->add(transport);
                             this->impl->taskRunner->wakeup();
                             transport.reset(NULL);
@@ -999,9 +1031,9 @@ bool FailoverTransport::iterate() {
             }
         }
 
-        int reconnectAttempts = this->impl->calculateReconnectAttemptLimit();
+        int reconnectLimit = this->impl->calculateReconnectAttemptLimit();
 
-        if (reconnectAttempts >= 0 && ++this->impl->connectFailures >= reconnectAttempts) {
+        if (reconnectLimit != impl->INFINITE_WAIT && ++this->impl->connectFailures > reconnectLimit) {
             this->impl->connectionFailure = failure;
 
             // Make sure on initial startup, that the transportListener has been initialized

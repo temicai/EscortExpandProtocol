@@ -372,7 +372,7 @@ namespace {
         thread->interruptible = false;
         thread->interrupted = false;
         thread->parked = false;
-        thread->priority = Thread::NORM_PRIORITY;
+        thread->priority = Thread::LANG_NORM_PRIORITY;
         thread->stackSize = -1;
         thread->state = Thread::NEW;
         thread->references = 2;
@@ -446,7 +446,7 @@ namespace {
 
         // Spawn the thread so that we don't deadlock on the monitor.
         target->interruptingThread = initThreadHandle(new ThreadHandle());
-        createThreadInstance(target->interruptingThread, 0, Thread::NORM_PRIORITY, false, interruptionThread, target);
+        createThreadInstance(target->interruptingThread, 0, Thread::LANG_NORM_PRIORITY, false, interruptionThread, target);
 
         return result;
     }
@@ -812,7 +812,7 @@ void Threading::initialize() {
 
     // Figure out what the OS level thread priority mappings are for the Thread
     // classes generic priority value range.
-    PlatformThread::initPriorityMapping(Thread::MAX_PRIORITY + 1, library->priorityMapping);
+    PlatformThread::initPriorityMapping(Thread::LANG_MAX_PRIORITY + 1, library->priorityMapping);
 
     PlatformThread::createTlsKey(&(library->threadKey));
     PlatformThread::createTlsKey(&(library->selfKey));
@@ -917,7 +917,7 @@ ThreadHandle* Threading::createNewThread(Thread* parent, const char* name, long 
     thread->parent = parent;
     thread->name = ::strdup(name);
 
-    createThreadInstance(thread.get(), stackSize, Thread::NORM_PRIORITY, true, runCallback, thread.get());
+    createThreadInstance(thread.get(), stackSize, Thread::LANG_NORM_PRIORITY, true, runCallback, thread.get());
 
     return thread.release();
 }

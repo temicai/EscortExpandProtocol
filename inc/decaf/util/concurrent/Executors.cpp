@@ -70,8 +70,8 @@ namespace {
         Thread* newThread(Runnable* task) {
             Thread* thread = new Thread(task, namePrefix + Integer::toString(threadNumber.getAndIncrement()));
 
-            if (thread->getPriority() != Thread::NORM_PRIORITY) {
-                thread->setPriority(Thread::NORM_PRIORITY);
+            if (thread->getPriority() != Thread::LANG_NORM_PRIORITY) {
+                thread->setPriority(Thread::LANG_NORM_PRIORITY);
             }
 
             return thread;

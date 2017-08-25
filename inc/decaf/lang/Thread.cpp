@@ -243,7 +243,7 @@ std::string Thread::getName() const {
 ////////////////////////////////////////////////////////////////////////////////
 void Thread::setPriority(int value) {
 
-    if (value < Thread::MIN_PRIORITY || value > Thread::MAX_PRIORITY) {
+    if (value < Thread::LANG_MIN_PRIORITY || value > Thread::LANG_MAX_PRIORITY) {
         throw IllegalArgumentException(
             __FILE__, __LINE__,
             "Thread::setPriority - Specified value {%d} is out of range", value );

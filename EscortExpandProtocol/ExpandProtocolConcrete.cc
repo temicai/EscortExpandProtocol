@@ -461,6 +461,7 @@ int expand_protocol::ExpandProtocolService::Start(const char * pMsgSrvIp_, unsig
 	}
 	
 	m_pMsgConsumer = new expand_protocol::SimpleAsyncConsumer(strBrokerURI, strDestURI, false);
+	m_pMsgConsumer->setConsumerMessageCallback(expand_protocol::consumerMsgCb, this);
 	m_pMsgConsumer->runConsumer();
 
 	m_pPubMsgProducer = new expand_protocol::SimpleProducer(strBrokerURI, false);
@@ -701,9 +702,9 @@ void expand_protocol::ExpandProtocolService::dealConsumerMessage()
 		if (pConsumerMsg) {
 			if (pConsumerMsg->pData) {
 				char szLog[1024] = { 0 };
-				decryptMessage(pConsumerMsg->pData, 0, pConsumerMsg->uiDataLen, 0xea);
+				decryptMessage(pConsumerMsg->pData, 0, pConsumerMsg->uiDataLen, kReqSafeKey);
 				std::string ansiStr = Utf8ToAnsi((char *)pConsumerMsg->pData);
-				sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]receive message: %d\r\n",
+				sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]receive message: %s\r\n",
 					__FUNCTION__, __LINE__, ansiStr.c_str());
 				writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 				rapidjson::Document doc;
@@ -830,7 +831,7 @@ void expand_protocol::ExpandProtocolService::dealConsumerMessage()
 							break;
 						}
 						default: {
-							sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]consume message unsupport cmd %hu\r\d",
+							sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]consume message unsupport cmd %hu\r\n",
 								__FUNCTION__, __LINE__, usCmd);
 							writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 							break;
@@ -838,7 +839,7 @@ void expand_protocol::ExpandProtocolService::dealConsumerMessage()
 					}
 				}
 				else {
-					sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]can't parse JSON error %d:%s\r\n",
+					sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]can't parse JSON error %d\r\n",
 						__FUNCTION__, __LINE__, doc.GetParseError());
 					writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 				}
@@ -916,7 +917,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 							}
 						}
 						if (strlen(aliveMsg.szDeviceId) && strlen(aliveMsg.szOrg) && aliveMsg.ulMessageTime > 0){
-							handleTopicAliveMessage(&aliveMsg, pTopicMsg->szMsgMark);
+							handleTopicAliveMessage(&aliveMsg);
 						}
 						else {
 							sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]topic alive message miss parameter, deviceId=%s,"
@@ -945,19 +946,261 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 						}
 						switch (nSubType) {
 							case LOCATE_GPS: {
-								
+								TopicLocateMessageGps locateGps;
+								memset(&locateGps, 0, sizeof(locateGps));
+								if (doc.HasMember("factoryId")) {
+									if (doc["factoryId"].IsString() && doc["factoryId"].GetStringLength()) {
+										strcpy_s(locateGps.szFactoryId, sizeof(locateGps.szFactoryId),
+											doc["factoryId"].GetString());
+									}
+								}
+								if (doc.HasMember("deviceId")) {
+									if (doc["deviceId"].IsString() && doc["deviceId"].GetStringLength()) {
+										strcpy_s(locateGps.szDeviceId, sizeof(locateGps.szDeviceId),
+											doc["deviceId"].GetString());
+									}
+								}
+								if (doc.HasMember("orgId")) {
+									if (doc["orgId"].IsString() && doc["orgId"].GetStringLength()) {
+										strcpy_s(locateGps.szOrg, sizeof(locateGps.szOrg),
+											doc["orgId"].GetString());
+									}
+								}
+								if (doc.HasMember("datetime")) {
+									if (doc["datetime"].IsString() && doc["datetime"].GetStringLength()) {
+										locateGps.ulMessageTime = makeDatetime(doc["datetime"].GetString());
+									}
+								}
+								if (doc.HasMember("latitude")) {
+									if (doc["latitude"].IsDouble()) {
+										locateGps.dLat = doc["latitude"].GetDouble();
+									}
+								}
+								if (doc.HasMember("lngitude")) {
+									if (doc["lngitude"].IsDouble()) {
+										locateGps.dLng = doc["lngitude"].GetDouble();
+									}
+								}
+								if (doc.HasMember("speed")) {
+									if (doc["speed"].IsDouble()) {
+										locateGps.dSpeed = doc["speed"].GetDouble();
+									}
+								}
+								if (doc.HasMember("direction")) {
+									if (doc["direction"].IsInt()) {
+										locateGps.nDirection = doc["latitude"].GetInt();
+									}
+								}
+								if (doc.HasMember("latType")) {
+									if (doc["latType"].IsInt()) {
+										locateGps.usLatType = (unsigned short)doc["latType"].GetInt();
+									}
+								}
+								if (doc.HasMember("lngType")) {
+									if (doc["lngType"].IsInt()) {
+										locateGps.usLngType = (unsigned short)doc["lngType"].GetInt();
+									}
+								}
+								if (doc.HasMember("sattelite")) {
+									if (doc["sattelite"].IsInt()) {
+										locateGps.usStattelite = (unsigned short)doc["sattelite"].GetInt();
+									}
+								}
+								if (doc.HasMember("intensity")) {
+									if (doc["intensity"].IsInt()) {
+										locateGps.usIntensity = (unsigned short)doc["intensity"].GetInt();
+									}
+								}
+								if (doc.HasMember("locateFlag")) {
+									if (doc["locateFlag"].IsInt()) {
+										locateGps.nFlag = doc["locateFlag"].GetInt();
+									}
+								}
+								if (doc.HasMember("coordinate")) {
+									if (doc["coordinate"].IsInt()) {
+										locateGps.nCoordinate = doc["coordinate"].GetInt();
+									}
+								}
+								if (doc.HasMember("battery")) {
+									if (doc["battery"].IsInt()) {
+										locateGps.usBattery = (unsigned short)doc["battery"].GetInt();
+									}
+								}
+								if (strlen(locateGps.szDeviceId) && strlen(locateGps.szOrg) 
+									&& locateGps.ulMessageTime > 0) {
+									handleTopicLocateGpsMessage(&locateGps);
+								}
+								else {
+									sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic GPS locate message miss "
+										"parameter, deviceId=%s, orgId=%s, lat=%f, lng=%f, speed=%f, direction=%d, "
+										"coordinate=%d, battery=%hu, locateFlag=%d, sattelite=%d, intensity=%d, msgUuid=%s,"
+										" msgMark=%s, msgSeq=%hu, msgFrom=%s\r\n", __FUNCTION__, __LINE__, locateGps.szDeviceId,
+										locateGps.szOrg, locateGps.dLat, locateGps.dLng, locateGps.dSpeed, locateGps.nDirection,
+										locateGps.nCoordinate, locateGps.usBattery, locateGps.nFlag, locateGps.usStattelite,
+										locateGps.usIntensity, pTopicMsg->szMsgUuid, pTopicMsg->szMsgMark, 
+										pTopicMsg->usMsgSequence, pTopicMsg->szMsgFrom);
+									writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+								}
 								break;
 							}
 							case LOCATE_LBS: {
-								
+								TopicLocateMessageLbs locateLbs;
+								memset(&locateLbs, 0, sizeof(locateLbs));
+								if (doc.HasMember("factoryId")) {
+									if (doc["factoryId"].IsString() && doc["factoryId"].GetStringLength()) {
+										strcpy_s(locateLbs.szFactoryId, sizeof(locateLbs.szFactoryId),
+											doc["factoryId"].GetString());
+									}
+								}
+								if (doc.HasMember("deviceId")) {
+									if (doc["deviceId"].IsString() && doc["deviceId"].GetStringLength()) {
+										strcpy_s(locateLbs.szDeviceId, sizeof(locateLbs.szDeviceId),
+											doc["deviceId"].GetString());
+									}
+								}
+								if (doc.HasMember("orgId")) {
+									if (doc["orgId"].IsString() && doc["orgId"].GetStringLength()) {
+										strcpy_s(locateLbs.szOrg, sizeof(locateLbs.szOrg), doc["orgId"].GetString());
+									}
+								}
+								if (doc.HasMember("datetime")) {
+									if (doc["datetime"].IsString() && doc["datetime"].GetStringLength()) {
+										locateLbs.ulMessageTime = makeDatetime(doc["datetime"].GetString());
+									}
+								}
+								if (doc.HasMember("latitude")) {
+									if (doc["latitude"].IsDouble()) {
+										locateLbs.dLat = doc["latitude"].GetDouble();
+									}
+								}
+								if (doc.HasMember("lngitude")) {
+									if (doc["lngitude"].IsDouble()) {
+										locateLbs.dLng = doc["lngitude"].GetDouble();
+									}
+								}
+								if (doc.HasMember("latType")) {
+									if (doc["latType"].IsInt()) {
+										locateLbs.usLatType = (unsigned short)doc["latType"].GetInt();
+									}
+								}
+								if (doc.HasMember("lngType")) {
+									if (doc["lngType"].IsInt()) {
+										locateLbs.usLngType = (unsigned short)doc["lngType"].GetInt();
+									}
+								}
+								if (doc.HasMember("locateFlag")) {
+									if (doc["locateFlag"].IsInt()) {
+										locateLbs.usFlag = (unsigned short)doc["locateFlag"].GetInt();
+									}
+								}
+								if (doc.HasMember("battery")) {
+									if (doc["battery"].IsInt()) {
+										locateLbs.usBattery = (unsigned short)doc["battery"].GetInt();
+									}
+								}
+								if (doc.HasMember("precision")) {
+									if (doc["precision"].IsInt()) {
+										locateLbs.nPrecision = doc["precision"].GetInt();
+									}
+								}
+								if (doc.HasMember("coordinate")) {
+									if (doc["coordinate"].IsInt()) {
+										locateLbs.nCoordinate = doc["coordinate"].GetInt();
+									}
+								}
+								if (strlen(locateLbs.szDeviceId) && strlen(locateLbs.szOrg)
+									&& locateLbs.ulMessageTime > 0) {
+									handleTopicLocateLbsMessage(&locateLbs);
+								}
+								else {
+									sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic GPS locate message miss "
+										"parameter, deviceId=%s, orgId=%s, lat=%f, lng=%f, coordinate=%d, precision=%d, "
+										"battery=%hu, locateFlag=%d, msgUuid=%s, msgMark=%s, msgSeq=%hu, msgFrom=%s\r\n",
+										__FUNCTION__, __LINE__, locateLbs.szDeviceId, locateLbs.szOrg, locateLbs.dLat, 
+										locateLbs.dLng, locateLbs.nCoordinate, locateLbs.nPrecision, locateLbs.usBattery, 
+										locateLbs.usFlag, pTopicMsg->szMsgUuid, pTopicMsg->szMsgMark, pTopicMsg->usMsgSequence,
+										pTopicMsg->szMsgFrom);
+									writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+								}
 								break;
 							}
-							case  LOCATE_APP: {
-								
+							case LOCATE_APP: {
+								TopicLocateMessageApp locateApp;
+								memset(&locateApp, 0, sizeof(locateApp));
+								if (doc.HasMember("factroyId")) {
+									if (doc["factoryId"].IsString() && doc["factoryId"].GetStringLength()) {
+										strcpy_s(locateApp.szFactoryId, sizeof(locateApp.szFactoryId),
+											doc["factoryId"].GetString());
+									}
+								}
+								if (doc.HasMember("deviceId")) {
+									if (doc["deviceId"].IsString() && doc["deviceId"].GetStringLength()) {
+										strcpy_s(locateApp.szDeviceId, sizeof(locateApp.szDeviceId),
+											doc["deviceId"].GetString());
+									}
+								}
+								if (doc.HasMember("orgId")) {
+									if (doc["orgId"].IsString() && doc["orgId"].GetStringLength()) {
+										strcpy_s(locateApp.szOrg, sizeof(locateApp.szOrg),
+											doc["orgId"].GetString());
+									}
+								}
+								if (doc.HasMember("taskId")) {
+									if (doc["taskId"].IsString() && doc["taskId"].GetStringLength()) {
+										strcpy_s(locateApp.szTaskId, sizeof(locateApp.szTaskId),
+											doc["taskId"].GetString());
+									}
+								}
+								if (doc.HasMember("datetime")) {
+									if (doc["datetime"].IsString() && doc["datetime"].GetStringLength()) {
+										locateApp.ulMessageTime = makeDatetime(doc["factoryId"].GetString());
+									}
+								}
+								if (doc.HasMember("latitude")) {
+									if (doc["latitude"].IsDouble()) {
+										locateApp.dLat = doc["latitude"].GetDouble();
+									}
+								}
+								if (doc.HasMember("lngitude")) {
+									if (doc["lngitude"].IsDouble()) {
+										locateApp.dLng = doc["lngitude"].GetDouble();
+									}
+								}
+								if (doc.HasMember("coordinate")) {
+									if (doc["coordinate"].IsInt()) {
+										locateApp.nCoordinate = doc["coordinate"].GetInt();
+									}
+								}
+								if (doc.HasMember("battery")) {
+									if (doc["battery"].IsInt()) {
+										locateApp.usBattery = (unsigned short)doc["battery"].GetInt();
+									}
+								}
+								if (strlen(locateApp.szDeviceId) && strlen(locateApp.szOrg)
+									&& strlen(locateApp.szTaskId) && locateApp.ulMessageTime > 0) {
+									handleTopicLocateAppMessage(&locateApp);
+								}
+								else {
+									sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic locate app message miss "
+										"parameter, deviceId=%s, orgId=%s, taskId=%s, datetime=%lu, lat=%f, lng=%f, "
+										"battery=%hu, coordinate=%d, msgUuid=%s, msgMark=%s, msgSeq=%hu, msgFrom=%s\r\n",
+										__FUNCTION__, __LINE__, locateApp.szDeviceId, locateApp.szOrg, locateApp.szTaskId,
+										locateApp.ulMessageTime, locateApp.dLat, locateApp.dLng, locateApp.usBattery,
+										locateApp.nCoordinate, pTopicMsg->szMsgUuid, pTopicMsg->szMsgMark,
+										pTopicMsg->usMsgSequence, pTopicMsg->szMsgFrom);
+									writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+								}
+								break;
+							}
+							default: {
+								sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse topic locate message unsupport "
+									"type=%d, body=%s, msgUuid=%s, msgMark=%s, msgSeq=%hu, msgFrom=%s\r\n", __FUNCTION__, 
+									__LINE__, nSubType, pTopicMsg->szMsgBody, pTopicMsg->szMsgUuid, pTopicMsg->szMsgMark,
+									pTopicMsg->usMsgSequence, pTopicMsg->szMsgFrom);
+								writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
 								break;
 							}
 						}
-
 					}
 					else {
 						sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse device locate message json error=%d,"
@@ -1015,7 +1258,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 								}
 								if (strlen(lpAlarmMsg.szDeviceId) && strlen(lpAlarmMsg.szOrg)
 									&& lpAlarmMsg.ulMessageTime > 0) {
-									handleTopicAlarmLowpowerMessage(&lpAlarmMsg, pTopicMsg->szMsgMark);
+									handleTopicAlarmLowpowerMessage(&lpAlarmMsg);
 								}
 								else {
 									sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic lowpower alarm miss"
@@ -1067,7 +1310,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 								}
 								if (strlen(lsAlarmMsg.szDeviceId) && strlen(lsAlarmMsg.szOrg) 
 									&& lsAlarmMsg.ulMessageTime > 0) {
-									handleTopicAlarmLooseMsg(&lsAlarmMsg, pTopicMsg->szMsgMark);
+									handleTopicAlarmLooseMsg(&lsAlarmMsg);
 								}
 								break;
 							}
@@ -1137,7 +1380,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 								if (strlen(fleeAlarmMsg.szDeviceId) && strlen(fleeAlarmMsg.szGuarder) 
 									&& strlen(fleeAlarmMsg.szTaskId) && strlen(fleeAlarmMsg.szOrg) 
 									&& fleeAlarmMsg.ulMessageTime) {
-									handleTopicAlarmFleeMsg(&fleeAlarmMsg, pTopicMsg->szMsgMark);
+									handleTopicAlarmFleeMsg(&fleeAlarmMsg);
 								}
 								else {
 									sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse flee message data miss,"
@@ -1195,7 +1438,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 								}
 								if (strlen(alarmLocateLost.szDeviceId) && strlen(alarmLocateLost.szOrg)
 									&& strlen(alarmLocateLost.szGuarder) && alarmLocateLost.ulMessageTime > 0) {
-									handleTopicAlarmLocateLostMsg(&alarmLocateLost, pTopicMsg->szMsgFrom);
+									handleTopicAlarmLocateLostMsg(&alarmLocateLost);
 								}
 								else {
 									sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic alarm locate lost "
@@ -1307,7 +1550,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 									&& strlen(fenceAlarmMsg.szFenceTaskId) && strlen(fenceAlarmMsg.szFenceId)
 									&& fenceAlarmMsg.nLocateType != LOCATE_APP
 									&& fenceAlarmMsg.dLatitude > 0.00 && fenceAlarmMsg.dLngitude > 0.00) {
-									handleTopicAlarmFenceMsg(&fenceAlarmMsg, pTopicMsg->szMsgMark);
+									handleTopicAlarmFenceMsg(&fenceAlarmMsg);
 								}
 								else {
 									sprintf_s(szLog, sizeof(szLog), "[access_service]%s[%d]parse fence alarm, "
@@ -1389,7 +1632,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 						}
 						if (strlen(devBindMsg.szDeviceId) && strlen(devBindMsg.szGuarder) 
 							&& strlen(devBindMsg.szOrg) && devBindMsg.ulMessageTime > 0) {
-							handleTopicDeviceBindMsg(&devBindMsg, pTopicMsg->szMsgMark);
+							handleTopicDeviceBindMsg(&devBindMsg);
 						}
 						else {
 							sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic device bind message data"
@@ -1444,7 +1687,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 						}
 						if (strlen(onlineMsg.szDeviceId) && strlen(onlineMsg.szOrg)
 							&& onlineMsg.ulMessageTime > 0) {
-							handleTopicOnlineMessage(&onlineMsg, pTopicMsg->szMsgMark);
+							handleTopicOnlineMessage(&onlineMsg);
 						}
 						else {
 							sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]topic online message miss parameter, "
@@ -1494,7 +1737,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 							}
 						}
 						if (strlen(offlineMsg.szDeviceId) && strlen(offlineMsg.szOrg) && offlineMsg.ulMessageTime > 0) {
-							handleTopicOfflineMessage(&offlineMsg, pTopicMsg->szMsgMark);
+							handleTopicOfflineMessage(&offlineMsg);
 						}
 						else {
 							sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]topic offline message miss parameter, deviceId=%s,"
@@ -1506,7 +1749,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 					}
 					else {
 						sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse topic offline message error=%d, body=%s, "
-							"uuid=%s, mark=%s, seq=%hu\r\n", __FUNCTION__, __LINE__, doc.GetParseError(), 
+							"uuid=%s, from=%s, mark=%s, seq=%hu\r\n", __FUNCTION__, __LINE__, doc.GetParseError(), 
 							pTopicMsg->szMsgBody, pTopicMsg->szMsgUuid, pTopicMsg->szMsgFrom, pTopicMsg->szMsgMark, 
 							pTopicMsg->usMsgSequence);
 						writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
@@ -1583,7 +1826,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 									}
 									if (strlen(taskMsg.szDeviceId) && strlen(taskMsg.szTaskId) && strlen(taskMsg.szGuarder)
 										&& strlen(taskMsg.szOrg) && taskMsg.ulMessageTime > 0){
-										handleTopicTaskSubmitMsg(&taskMsg, pTopicMsg->szMsgMark);
+										handleTopicTaskSubmitMsg(&taskMsg);
 									}
 									else {
 										sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic task message data miss parameter,"
@@ -1614,7 +1857,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 										}
 									}
 									if (strlen(taskModifyMsg.szTaskId) && taskModifyMsg.ulMessageTime > 0) {
-										handleTopicTaskModifyMsg(&taskModifyMsg, pTopicMsg->szMsgMark);
+										handleTopicTaskModifyMsg(&taskModifyMsg);
 									}
 									else {
 										sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic task modify message miss parameter, "
@@ -1645,7 +1888,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 										}
 									}
 									if (strlen(taskCloseMsg.szTaskId) && taskCloseMsg.ulMessageTime > 0) {
-										handleTopicTaskCloseMsg(&taskCloseMsg, pTopicMsg->szMsgMark);
+										handleTopicTaskCloseMsg(&taskCloseMsg);
 									}
 									else {
 										sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse topic task close message miss "
@@ -1678,6 +1921,499 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 					break;
 				}
 				case PUBMSG_BUFFER_MODIFY: {
+					if (!doc.Parse(pTopicMsg->szMsgBody).HasParseError()) {
+						int nObject = 0;
+						int nOperate = 0;
+						if (doc.HasMember("object")) {
+							if (doc["object"].IsInt()) {
+								nObject = doc["object"].GetInt();
+							}
+						}
+						if (doc.HasMember("operate")) {
+							if (doc["operate"].IsInt()) {
+								nOperate = doc["operate"].GetInt();
+							}
+						}
+						switch (nObject) {
+							case BUFFER_GUARDER: {
+								size_t nGuarderSize = sizeof(Guarder);
+								Guarder guarder;
+								memset(&guarder, 0, nGuarderSize);
+								char szDateTime[20] = { 0 };
+								if (doc.HasMember("guarder")) {
+									if (doc["guarder"].IsString() && doc["guarder"].GetStringLength()) {
+										strcpy_s(guarder.szId, sizeof(guarder.szId), doc["guarder"].GetString());
+									}
+								}
+								if (doc.HasMember("orgId")) {
+									if (doc["orgId"].IsString() && doc["orgId"].GetStringLength()) {
+										strcpy_s(guarder.szOrg, sizeof(guarder.szOrg), doc["orgId"].GetString());
+									}
+								}
+								if (doc.HasMember("datetime")) {
+									if (doc["datetime"].IsString() && doc["datetime"].GetStringLength()) {
+										strcpy_s(szDateTime, sizeof(szDateTime), doc["datetime"].GetString());
+									}
+								}
+								if (nOperate == BUFFER_OPERATE_DELETE) {
+									if (strlen(guarder.szId) && strlen(guarder.szOrg) && strlen(szDateTime)) {
+										pthread_mutex_lock(&m_mutex4GuarderList);
+										std::string strGuarderId = guarder.szId;
+										if (m_guarderList.empty()) {
+											expand_protocol::EscortGuarderList::iterator iter = m_guarderList.find(strGuarderId);
+											if (iter != m_guarderList.end()) {
+												Guarder * pGuarder = iter->second;
+												if (pGuarder) {
+													delete pGuarder;
+													pGuarder = NULL;
+												}
+												m_guarderList.erase(iter);
+											}
+										}
+										pthread_mutex_unlock(&m_mutex4GuarderList);
+									}
+									else {
+										sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic Buffer Modify, object=%u,"
+											" operate=%d, guarder=%s, org=%s, datetime=%s, msgUuid=%s, msgMark=%s, msgSeq=%hu,"
+											" msgFrom=%s\r\n", __FUNCTION__, __LINE__, BUFFER_GUARDER, nOperate, guarder.szId, 
+											guarder.szOrg, szDateTime, pTopicMsg->szMsgUuid, pTopicMsg->szMsgMark, 
+											pTopicMsg->usMsgSequence, pTopicMsg->szMsgFrom);
+										writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+									}
+								}
+								else {
+									if (doc.HasMember("name")) {
+										if (doc["name"].IsString() && doc["name"].GetStringLength()) {
+											strcpy_s(guarder.szTagName, sizeof(guarder.szTagName), doc["name"].GetString());
+										}
+									}
+									if (doc.HasMember("passwd")) {
+										if (doc["passwd"].IsString() && doc["passwd"].GetStringLength()) {
+											strcpy_s(guarder.szPassword, sizeof(guarder.szPassword),
+												doc["passwd"].GetString());
+										}
+									}
+									if (doc.HasMember("roleType")) {
+										if (doc["roleType"].IsInt()) {
+											guarder.usRoleType = (unsigned short)doc["roleType"].GetInt();
+										}
+									}
+									if (strlen(guarder.szId) && strlen(guarder.szOrg) && strlen(guarder.szTagName)
+										&& strlen(guarder.szPassword) && strlen(szDateTime)){
+										if (nOperate == BUFFER_OPERATE_NEW) {
+											std::string strGuarderId = guarder.szId;
+											pthread_mutex_lock(&m_mutex4GuarderList);
+											expand_protocol::EscortGuarderList::iterator iter = m_guarderList.find(strGuarderId);
+											if (iter != m_guarderList.end()) {
+												sprintf_s(szLog, sizeof(szLog), "[access_service]%s[%d]Topic Buffer Modify"
+													" message, object=%u, operate=%u, guarder=%s, name=%s, passwd=%s, orgId=%s,"
+													" roleType=%hu already exists in the guarderList\r\n", __FUNCTION__,
+													__LINE__, BUFFER_GUARDER, BUFFER_OPERATE_NEW, guarder.szId,
+													guarder.szTagName, guarder.szPassword, guarder.szOrg, guarder.usRoleType);
+												writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+											}
+											else {
+												Guarder * pGuarder = new Guarder();
+												memset(pGuarder, 0, nGuarderSize);
+												strncpy_s(pGuarder->szId, sizeof(pGuarder->szId), guarder.szId,
+													strlen(guarder.szId));
+												strncpy_s(pGuarder->szTagName, sizeof(pGuarder->szTagName),
+													guarder.szTagName, strlen(guarder.szTagName));
+												strncpy_s(pGuarder->szOrg, sizeof(pGuarder->szOrg), guarder.szOrg,
+													strlen(guarder.szOrg));
+												strncpy_s(pGuarder->szPassword, sizeof(pGuarder->szPassword),
+													guarder.szPassword, strlen(guarder.szPassword));
+												pGuarder->szLink[0] = '\0';
+												pGuarder->szTaskId[0] = '\0';
+												pGuarder->szBindDevice[0] = '\0';
+												pGuarder->szCurrentSession[0] = '\0';
+												pGuarder->szTaskStartTime[0] = '\0';
+												pGuarder->usState = STATE_GUARDER_FREE;
+												pGuarder->usRoleType = guarder.usRoleType;
+												m_guarderList.emplace(strGuarderId, pGuarder);
+												sprintf_s(szLog, sizeof(szLog), "[access_service]%s[%d]Topic Buffer Modify message"
+													", object=%u, operate=%u, guarder=%s, name=%s, passwd=%s, orgId=%s, roleType=%hu\r\n",
+													__FUNCTION__, __LINE__, BUFFER_GUARDER, BUFFER_OPERATE_NEW, guarder.szId,
+													guarder.szTagName, guarder.szPassword, guarder.szOrg, guarder.usRoleType);
+												writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+											}
+											pthread_mutex_unlock(&m_mutex4GuarderList);
+										}
+										else if (nOperate == BUFFER_OPERATE_UPDATE) {
+											pthread_mutex_lock(&m_mutex4GuarderList);
+											std::string strGuarderId = guarder.szId;
+											expand_protocol::EscortGuarderList::iterator iter = m_guarderList.find(strGuarderId);
+											if (iter != m_guarderList.end()) {
+												Guarder * pGuarder = iter->second;
+												if (pGuarder) {
+													if (strcmp(pGuarder->szTagName, guarder.szTagName) != 0) {
+														strncpy_s(pGuarder->szTagName, sizeof(pGuarder->szTagName),
+															guarder.szTagName, strlen(guarder.szTagName));
+													}
+													if (strcmp(pGuarder->szPassword, guarder.szPassword) != 0) {
+														strncpy_s(pGuarder->szPassword, sizeof(pGuarder->szPassword),
+															guarder.szPassword, strlen(guarder.szPassword));
+													}
+													if (strcmp(pGuarder->szOrg, guarder.szOrg) != 0) {
+														strncpy_s(pGuarder->szOrg, sizeof(pGuarder->szOrg), guarder.szOrg,
+															strlen(guarder.szOrg));
+													}
+													if (pGuarder->usRoleType != guarder.usRoleType) {
+														pGuarder->usRoleType = guarder.usRoleType;
+													}
+													sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]Topic Buffer Modify message, "
+														"object=%u, operate=%u, guarder=%s, name=%s, passwd=%s, orgId=%s, roleType=%hu\r\n",
+														__FUNCTION__, __LINE__, BUFFER_GUARDER, BUFFER_OPERATE_UPDATE, guarder.szId,
+														guarder.szTagName, guarder.szPassword, guarder.szOrg, guarder.usRoleType);
+													writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+												}
+												else {
+													sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]Topic Buffer Modify message, "
+														"object=%u, operate=%u, guarder=%s, name=%s, passwd=%s, orgId=%s, not found in "
+														"guarderList\r\n", __FUNCTION__, __LINE__, BUFFER_GUARDER, BUFFER_OPERATE_UPDATE,
+														guarder.szId, guarder.szTagName, guarder.szPassword, guarder.szOrg);
+													writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+												}
+											}
+											pthread_mutex_unlock(&m_mutex4GuarderList);
+										}
+									}
+								}
+								break;
+							}
+							case BUFFER_DEVICE: {
+								size_t nDeviceSize = sizeof(WristletDevice);
+								WristletDevice device;
+								char szDatetime[20] = { 0 };
+								if (doc.HasMember("deviceId")) {
+									if (doc["deviceId"].IsString() && doc["deviceId"].GetStringLength()) {
+										strcpy_s(device.deviceBasic.szDeviceId, sizeof(device.deviceBasic.szDeviceId),
+											doc["deviceId"].GetString());
+									}
+								}
+								if (doc.HasMember("factoryId")) {
+									if (doc["factoryId"].IsString() && doc["factoryId"].GetStringLength()) {
+										strcpy_s(device.deviceBasic.szFactoryId, sizeof(device.deviceBasic.szFactoryId),
+											doc["factoryId"].GetString());
+									}
+								}
+								if (doc.HasMember("orgId")) {
+									if (doc["orgId"].IsString() && doc["orgId"].GetStringLength()) {
+										strcpy_s(device.szOrganization, sizeof(device.szOrganization),
+											doc["orgId"].GetString());
+									}
+								}
+								if (doc.HasMember("battery")) {
+									if (doc["battery"].IsInt()) {
+										device.deviceBasic.nBattery = (unsigned char)doc["battery"].GetInt();
+									}
+								}
+								if (doc.HasMember("datetime")) {
+									if (doc["datetime"].IsString()) {
+										size_t nSize = doc["datetime"].GetStringLength();
+										if (nSize) {
+											strncpy_s(szDatetime, sizeof(szDatetime), doc["datetime"].GetString(), nSize);
+										}
+									}
+								}
+								if (strlen(device.deviceBasic.szDeviceId) && strlen(device.szOrganization)
+									&& strlen(szDatetime)) {
+									std::string strDeviceId = device.deviceBasic.szDeviceId;
+									if (nOperate == BUFFER_OPERATE_NEW) {
+										pthread_mutex_lock(&m_mutex4DeviceList);
+										expand_protocol::EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+										if (iter != m_deviceList.end()) {
+
+											WristletDevice * pDevice = iter->second;
+											if (pDevice) {
+												if (strlen(pDevice->szOrganization) == 0) {
+													strncpy_s(pDevice->szOrganization, sizeof(pDevice->szOrganization),
+														device.szOrganization, strlen(device.szOrganization));
+												}
+												if (strcmp(pDevice->deviceBasic.szFactoryId, device.deviceBasic.szFactoryId) != 0) {
+													strncpy_s(pDevice->deviceBasic.szFactoryId,
+														sizeof(pDevice->deviceBasic.szFactoryId),
+														device.deviceBasic.szFactoryId,
+														strlen(device.deviceBasic.szFactoryId));
+												}
+												sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]topic Buffer modify messsage, "
+													"object=%u, operate=%d, deviceId=%s, factoryId=%s, orgId=%s, datetime=%s, "
+													"already found in the deviceList\r\n", __FUNCTION__, __LINE__, BUFFER_DEVICE,
+													nOperate, device.deviceBasic.szDeviceId, device.deviceBasic.szFactoryId,
+													device.szOrganization, szDatetime);
+												writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+											}
+											else {
+												pDevice = (WristletDevice *)zmalloc(nDeviceSize);
+												memset(pDevice, 0, nDeviceSize);
+												strncpy_s(pDevice->deviceBasic.szDeviceId, sizeof(pDevice->deviceBasic.szDeviceId),
+													device.deviceBasic.szDeviceId, strlen(device.deviceBasic.szDeviceId));
+												strncpy_s(pDevice->deviceBasic.szFactoryId, sizeof(pDevice->deviceBasic.szFactoryId),
+													device.deviceBasic.szFactoryId, strlen(device.deviceBasic.szFactoryId));
+												strncpy_s(pDevice->szOrganization, sizeof(pDevice->szOrganization),
+													device.szOrganization, strlen(device.szOrganization));
+												pDevice->deviceBasic.nBattery = 0;
+												pDevice->deviceBasic.nStatus = DEV_OFFLINE;
+												pDevice->deviceBasic.ulLastActiveTime = 0;
+												pDevice->nLastLocateType = 0;
+												pDevice->szBindGuard[0] = '\0';
+												pDevice->szLinkId[0] = '\0';
+												pDevice->ulBindTime = 0;
+												pDevice->ulLastFleeAlertTime = 0;
+												pDevice->ulLastDeviceLocateTime = 0;
+												pDevice->ulLastGuarderLocateTime = 0;
+												pDevice->ulLastLooseAlertTime = 0;
+												pDevice->ulLastLowPowerAlertTime = 0;
+												pDevice->devicePosition.dLatitude = pDevice->devicePosition.dLngitude = 0.000000;
+												pDevice->devicePosition.usLatType = pDevice->devicePosition.usLngType = 1;
+												pDevice->devicePosition.nPrecision = 0;
+												pDevice->guardPosition.dLatitude = pDevice->guardPosition.dLngitude = 0.000000;
+												pDevice->guardPosition.usLatType = pDevice->guardPosition.usLngType = 1;
+												pDevice->guardPosition.nPrecision = 0;
+												pDevice->nDeviceFenceState = 0;
+												pDevice->nDeviceHasFence = 0;
+												std::string strDeviceId = device.deviceBasic.szDeviceId;
+												m_deviceList.emplace(strDeviceId, pDevice);
+												sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]topic Buffer modify message,"
+													" object=%u, operate=%d, deviceId=%s, factoryId=%s, orgId=%s, datetime=%s\r\n",
+													__FUNCTION__, __LINE__, BUFFER_DEVICE, nOperate, device.deviceBasic.szDeviceId,
+													device.deviceBasic.szFactoryId, device.szOrganization, szDatetime);
+												writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+											}
+										}
+										pthread_mutex_unlock(&m_mutex4DeviceList);
+									}
+									else if (nOperate == BUFFER_OPERATE_UPDATE) {
+										pthread_mutex_lock(&m_mutex4DeviceList);
+										expand_protocol::EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+										if (iter != m_deviceList.end()) {
+											WristletDevice * pDevice = iter->second;
+											if (pDevice) {
+												if (strcmp(pDevice->deviceBasic.szFactoryId, device.deviceBasic.szFactoryId) != 0) {
+													strncpy_s(pDevice->deviceBasic.szFactoryId,
+														sizeof(pDevice->deviceBasic.szFactoryId),
+														device.deviceBasic.szFactoryId,
+														strlen(device.deviceBasic.szFactoryId));
+												}
+												if (strcmp(pDevice->szOrganization, device.szOrganization) != 0) {
+													strncpy_s(pDevice->szOrganization, sizeof(pDevice->szOrganization),
+														device.szOrganization, strlen(device.szOrganization));
+												}
+												sprintf_s(szLog, sizeof(szLog), "[access_service]%s[%d]Topic Buffer modify message, "
+													"object=%u, operate=%u, deviceId=%s, factoryId=%s, orgId=%s, datetime=%s\r\n",
+													__FUNCTION__, __LINE__, BUFFER_DEVICE, BUFFER_OPERATE_UPDATE,
+													device.deviceBasic.szDeviceId, device.deviceBasic.szFactoryId,
+													device.szOrganization, szDatetime);
+												writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+											}
+											else {
+												sprintf_s(szLog, sizeof(szLog), "[access_service]%s[%d]Topic Buffer modify message,"
+													"object=%u, operate=%u, deviceId=%s, factoryId=%s, orgId=%s, datetime=%s,"
+													" not find int the deviceList\r\n", __FUNCTION__, __LINE__, BUFFER_DEVICE,
+													BUFFER_OPERATE_UPDATE, device.deviceBasic.szDeviceId, device.deviceBasic.szFactoryId,
+													device.szOrganization, szDatetime);
+												writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+											}
+										}
+										pthread_mutex_unlock(&m_mutex4DeviceList);
+									}
+									else if (nOperate == BUFFER_OPERATE_DELETE) {
+										pthread_mutex_lock(&m_mutex4DeviceList);
+										expand_protocol::EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+										if (iter != m_deviceList.end()) {
+											WristletDevice * pDevice = iter->second;
+											if (pDevice) {
+												delete pDevice;
+												pDevice = NULL;
+											}
+											m_deviceList.erase(iter);
+										}
+										pthread_mutex_unlock(&m_mutex4DeviceList);
+									}
+								}
+								else {
+									sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]Topic Buffer modify message, object=%u,"
+										" operate=%d, parameter miss, deviceId=%s, factoryId=%s, orgId=%s, datetime=%s\r\n",
+										__FUNCTION__, __LINE__, BUFFER_DEVICE, nOperate, device.deviceBasic.szDeviceId, 
+										device.deviceBasic.szFactoryId, device.szOrganization, szDatetime);
+									writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+								}
+								break;
+							}
+							case BUFFER_ORG: {
+								size_t nOrgSize = sizeof(OrganizationEx);
+								char szDatetime[20] = { 0 };
+								if (nOperate == BUFFER_OPERATE_NEW) {
+									OrganizationEx * pOrg =  new OrganizationEx ();
+									memset(pOrg, 0, nOrgSize);
+									pOrg->childList.clear();
+									if (doc.HasMember("orgId")) {
+										if (doc["orgId"].IsString()) {
+											size_t nSize = doc["orgId"].GetStringLength();
+											if (nSize) {
+												strcpy_s(pOrg->org.szOrgId, sizeof(pOrg->org.szOrgId), doc["orgId"].GetString());
+											}
+										}
+									}
+									if (doc.HasMember("orgName")) {
+										if (doc["orgName"].IsString()) {
+											size_t nSize = doc["orgName"].GetStringLength();
+											if (nSize) {
+												strcpy_s(pOrg->org.szOrgName, sizeof(pOrg->org.szOrgName),
+													doc["orgName"].GetString());
+											}
+										}
+									}
+									if (doc.HasMember("parentId")) {
+										if (doc["parentId"].IsString()) {
+											size_t nSize = doc["parentId"].GetStringLength();
+											if (nSize) {
+												strcpy_s(pOrg->org.szParentOrgId, sizeof(pOrg->org.szParentOrgId),
+													doc["parentId"].GetString());
+											}
+										}
+									}
+									if (doc.HasMember("datetime")) {
+										if (doc["datetime"].IsString()) {
+											size_t nSize = doc["datetime"].GetStringLength();
+											if (nSize) {
+												strcpy_s(szDatetime, sizeof(szDatetime), doc["datetime"].GetString());
+											}
+										}
+									}
+									if (strlen(pOrg->org.szOrgId) && strlen(szDatetime)) {
+										std::string strOrgId = pOrg->org.szOrgId;
+										sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]topic buffer add new org, id=%s, "
+											" orgName=%s, parentId=%s\r\n", __FUNCTION__, __LINE__, pOrg->org.szOrgId,
+											pOrg->org.szOrgName, pOrg->org.szParentOrgId);
+										writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+										pthread_mutex_lock(&m_mutex4OrgList);
+										std::map<std::string, OrganizationEx *>::iterator iter = m_orgList.find(strOrgId);
+										if (iter != m_orgList.end()) {
+											free(pOrg);
+											pOrg = NULL;
+										}
+										else {
+											m_orgList.emplace(strOrgId, pOrg);
+										}
+										pthread_mutex_unlock(&m_mutex4OrgList);
+										reloadOrgList(true);
+									}
+								}
+								else if (nOperate == BUFFER_OPERATE_UPDATE) {
+									Organization org;
+									memset(&org, 0, sizeof(org));
+									if (doc.HasMember("orgId")) {
+										if (doc["orgId"].IsString()) {
+											size_t nSize = doc["orgId"].GetStringLength();
+											if (nSize) {
+												strcpy_s(org.szOrgId, sizeof(org.szOrgId), doc["orgId"].GetString());
+											}
+										}
+									}
+									if (doc.HasMember("orgName")) {
+										if (doc["orgName"].IsString()) {
+											size_t nSize = doc["orgId"].GetStringLength();
+											if (nSize) {
+												strcpy_s(org.szOrgName, sizeof(org.szOrgName), doc["orgName"].GetString());
+											}
+										}
+									}
+									if (doc.HasMember("parentId")) {
+										if (doc["parentId"].IsString()) {
+											size_t nSize = doc["parentId"].GetStringLength();
+											if (nSize) {
+												strcpy_s(org.szParentOrgId, sizeof(org.szParentOrgId),
+													doc["parentId"].GetString());
+											}
+										}
+									}
+									if (doc.HasMember("datetime")) {
+										if (doc["datetime"].IsString()) {
+											size_t nSize = doc["datetime"].GetStringLength();
+											if (nSize) {
+												strcpy_s(szDatetime, sizeof(szDatetime), doc["datetime"].GetString());
+											}
+										}
+									}
+									if (strlen(org.szOrgId) && strlen(szDatetime)) {
+										std::string strOrgId = org.szOrgId;
+										bool bReload = false;
+										pthread_mutex_lock(&m_mutex4OrgList);
+										std::map<std::string, OrganizationEx *>::iterator iter = m_orgList.find(strOrgId);
+										if (iter != m_orgList.end()) {
+											OrganizationEx * pOrg = iter->second;
+											if (pOrg) {
+												if (strcmp(pOrg->org.szOrgName, org.szOrgName) != 0) {
+													strcpy_s(pOrg->org.szOrgName, sizeof(pOrg->org.szOrgName), org.szOrgName);
+												}
+												if (strcmp(pOrg->org.szParentOrgId, org.szParentOrgId) != 0) {
+													strcpy_s(pOrg->org.szParentOrgId, sizeof(pOrg->org.szParentOrgId),
+														org.szParentOrgId);
+													bReload = true;
+												}
+											}
+										}
+										pthread_mutex_unlock(&m_mutex4OrgList);
+										if (bReload) {
+											reloadOrgList(true);
+										}
+										sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]topic buffer update org, orgId=%s, "
+											"orgName=%s, parentId=%s\r\n", __FUNCTION__, __LINE__, org.szOrgId, org.szOrgName,
+											org.szParentOrgId);
+										writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+									}
+								}
+								else if (nOperate == BUFFER_OPERATE_DELETE) {
+									char szOrgId[40] = { 0 };
+									if (doc.HasMember("orgId")) {
+										if (doc["orgId"].IsString()) {
+											size_t nSize = doc["orgId"].GetStringLength();
+											if (nSize) {
+												strcpy_s(szOrgId, sizeof(szOrgId), doc["orgId"].GetString());
+											}
+										}
+									}
+									if (strlen(szOrgId)) {
+										std::string strOrgId = szOrgId;
+										bool bReload = false;
+										pthread_mutex_lock(&m_mutex4OrgList);
+										std::map<std::string, OrganizationEx *>::iterator iter = m_orgList.find(strOrgId);
+										if (iter != m_orgList.end()) {
+											OrganizationEx * pOrg = iter->second;
+											if (pOrg) {
+												delete pOrg;
+												pOrg = NULL;
+											}
+											m_orgList.erase(iter);
+										}
+										pthread_mutex_unlock(&m_mutex4OrgList);
+										if (bReload) {
+											reloadOrgList(true);
+										}
+										sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]topic buffer delete org, orgId=%s\r\n",
+											__FUNCTION__, __LINE__, szOrgId);
+										writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+									}
+								}
+								break;
+							}
+							default: {
+								sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]Topic Buffer modify message, object=%d not "
+									"deal, msgUuid=%s, msgMark=%s, msgSeq=%hu, msgFrom=%s\r\n", __FUNCTION__, __LINE__, 
+									nObject, pTopicMsg->szMsgUuid, pTopicMsg->szMsgMark, pTopicMsg->usMsgSequence, 
+									pTopicMsg->szMsgFrom);
+								writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+							}
+						}
+					}
+					else {
+						sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic buffer modify message "
+							"error=%d, msgUuid=%s, msgMark=%s, msgSeq=%hu, msgFrom=%s\r\n", __FUNCTION__, 
+							__LINE__, doc.HasParseError(), pTopicMsg->szMsgUuid, pTopicMsg->szMsgMark,
+							pTopicMsg->usMsgSequence, pTopicMsg->szMsgFrom);
+						writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+					}
 					break;
 				}
 				case PUBMSG_ACCOUNT_LOGIN: {
@@ -1694,6 +2430,765 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 			pTopicMsg = NULL;
 		}
 	} while (1);
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicAliveMessage(TopicAliveMessage * pAliveMsg_)
+{
+	char szLog[512] = { 0 };
+	if (pAliveMsg_ && strlen(pAliveMsg_->szDeviceId) && strlen(pAliveMsg_->szOrg)) {
+		if (getLoadDeviceList()) {
+			bool bValidDevice = false;
+			std::string strDeviceId = pAliveMsg_->szDeviceId;
+			pthread_mutex_lock(&m_mutex4DeviceList);
+			EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+			if (iter != m_deviceList.end()) {
+				WristletDevice * pDevice = iter->second;
+				if (pDevice) {
+					bValidDevice = true;
+					pDevice->deviceBasic.ulLastActiveTime = pAliveMsg_->ulMessageTime;
+					pDevice->deviceBasic.nBattery = pAliveMsg_->usBattery;
+					if (pDevice->deviceBasic.nStatus == DEV_OFFLINE) {
+						pDevice->deviceBasic.nStatus = DEV_ONLINE;
+						if (pDevice->deviceBasic.nLooseStatus) {
+							pDevice->deviceBasic.nStatus += DEV_LOOSE;
+						}
+						if (pDevice->deviceBasic.nBattery < 20) {
+							pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
+						}
+					}
+					if (strcmp(pAliveMsg_->szOrg, pDevice->szOrganization) != 0) {
+						strcpy_s(pDevice->szOrganization, sizeof(pDevice->szOrganization), pAliveMsg_->szOrg);
+					}
+					sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alive message, deviceId=%s, org=%s, "
+						"battery=%hu, status=%hu, datetime=%lu\r\n", __FUNCTION__, __LINE__, pAliveMsg_->szDeviceId,
+						pAliveMsg_->szOrg, pAliveMsg_->usBattery, pDevice->deviceBasic.nStatus, pAliveMsg_->ulMessageTime);
+					writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+				}
+				else {
+					sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alive message, not find deviceId=%s, "
+						"datetime=%lu\r\n", __FUNCTION__, __LINE__, pAliveMsg_->szDeviceId, pAliveMsg_->ulMessageTime);
+					writeLog(szLog, pf_logger::eLOGCATEGORY_WARN, m_usLogType);
+				}
+			}
+			pthread_mutex_unlock(&m_mutex4DeviceList);
+		}
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicOnlineMessage(TopicOnlineMessage * pMsg_)
+{
+	char szLog[512] = { 0 };
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && strlen(pMsg_->szOrg)) {
+		if (getLoadDeviceList()) {
+			std::string strDeviceId = pMsg_->szDeviceId;
+			bool bValidDevice = false;
+			char szDatetime[20] = { 0 };
+			formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+			pthread_mutex_lock(&m_mutex4DeviceList);
+			EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+			if (iter != m_deviceList.end()) {
+				WristletDevice * pDevice = iter->second;
+				if (pDevice) {
+					bValidDevice = false;
+					pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
+					pDevice->deviceBasic.nBattery = pMsg_->usBattery;
+					if (pDevice->deviceBasic.nStatus == DEV_OFFLINE) {
+						pDevice->deviceBasic.nStatus = DEV_ONLINE;
+						if (pDevice->deviceBasic.nLooseStatus) {
+							pDevice->deviceBasic.nStatus += DEV_LOOSE;
+						}
+						if (pDevice->deviceBasic.nBattery < 20) {
+							pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
+						}
+					}
+					if (strcmp(pMsg_->szOrg, pDevice->szOrganization) != 0) {
+						strcpy_s(pDevice->szOrganization, sizeof(pDevice->szOrganization), pMsg_->szOrg);
+					}
+					sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal online message, deviceId=%s, orgId=%s, "
+						"battery=%hu, status=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId,
+						pMsg_->szOrg, pMsg_->usBattery, pDevice->deviceBasic.nStatus, szDatetime);
+					writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+				}
+				else {
+					sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal online message, not find deviceId=%s, "
+						"datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, szDatetime);
+					writeLog(szLog, pf_logger::eLOGCATEGORY_WARN, m_usLogType);
+				}
+			}
+			pthread_mutex_unlock(&m_mutex4DeviceList);
+			if (bValidDevice) {
+				char szPubMsg[512] = { 0 };
+				sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"deviceId\":\"%s\",\"battery\":%hu,"
+					"\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_ONLINE, pMsg_->szDeviceId,
+					pMsg_->usBattery, szDatetime);
+				std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+				size_t nLen = strPubMsgUtf.size();
+				unsigned char * pPubMsg = new unsigned char[nLen + 1];
+				memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+				pPubMsg[nLen] = '\0';
+				encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+				std::string strDestURI = DEFAULT_PUBLISH_DEST;
+				m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+				sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish device online to %s, deviceId=%s, battery=%hu,"
+					" datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->usBattery,
+					szDatetime);
+				writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+				delete [] pPubMsg;
+				pPubMsg = NULL;
+			}
+		}
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicOfflineMessage(TopicOfflineMessage * pMsg_)
+{
+	char szLog[256] = { 0 };
+	if (pMsg_ && strlen(pMsg_->szDeviceId)) {
+		if (getLoadDeviceList()) {
+			std::string strDeviceId = pMsg_->szDeviceId;
+			char szDatetime[20] = { 0 };
+			formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+			bool bValidDevice = false;
+			pthread_mutex_lock(&m_mutex4DeviceList);
+			EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+			if (iter != m_deviceList.end()) {
+				WristletDevice * pDevice = iter->second;
+				if (pDevice) {
+					pDevice->deviceBasic.nStatus = 0;
+					pDevice->deviceBasic.nBattery = 0;
+					bValidDevice = true;
+					sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal offline message, deviceId=%s, orgId=%s, "
+						"datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->szOrg, szDatetime);
+					writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+				}
+			}
+			else {
+				sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal offline message, not find deviceId=%s, "
+					"datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, szDatetime);
+				writeLog(szLog, pf_logger::eLOGCATEGORY_WARN, m_usLogType);
+			}
+			pthread_mutex_unlock(&m_mutex4DeviceList);
+			if (bValidDevice) {
+				char szPubMsg[512] = { 0 };
+				sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"deviceId\":\"%s\",\"datetime\":\"%s\"}", 
+					escort_protocol::CMD_PUB_DEVICE_OFFLINE, pMsg_->szDeviceId, szDatetime);
+				std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+				size_t nLen = strPubMsgUtf.size();
+				unsigned char * pPubMsg = new unsigned char[nLen + 1];
+				memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+				pPubMsg[nLen] = '\0';
+				encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+				std::string strDestURI = DEFAULT_PUBLISH_DEST;
+				m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+				sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish device offline to %s, deviceId=%s, datetime=%s"
+					"\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, szDatetime);
+				writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+				delete[] pPubMsg;
+				pPubMsg = NULL;
+			}
+		}
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicDeviceBindMsg(TopicBindMessage * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && strlen(pMsg_->szGuarder)) {
+		if (getLoadDeviceList() && getLoadGuarderList()) {
+			std::string strDeviceId = pMsg_->szDeviceId;
+			std::string strGuarderId = pMsg_->szGuarder;
+			{
+				pthread_mutex_lock(&m_mutex4DeviceList);
+				EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+				if (iter != m_deviceList.end()) {
+					WristletDevice * pDevice = iter->second;
+					if (pDevice) {
+						if (pDevice->deviceBasic.nStatus == DEV_OFFLINE) {
+							pDevice->deviceBasic.nStatus = DEV_ONLINE;
+							if (pDevice->deviceBasic.nLooseStatus) {
+								pDevice->deviceBasic.nStatus += DEV_LOOSE;
+							}
+							if (pDevice->deviceBasic.nBattery < 20) {
+								pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
+							}
+						}
+						pDevice->deviceBasic.nBattery = pMsg_->usBattery;
+						pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
+						if (pMsg_->usMode == 0) {
+							strcpy_s(pDevice->szBindGuard, sizeof(pDevice->szBindGuard), strGuarderId.c_str());
+							pDevice->ulBindTime = pMsg_->ulMessageTime;
+						}
+						else {
+							memset(pDevice->szBindGuard, 0, sizeof(pDevice->szBindGuard));
+							pDevice->ulBindTime = 0;
+						}
+					}
+				}
+				pthread_mutex_unlock(&m_mutex4DeviceList);
+			}
+			{
+				pthread_mutex_lock(&m_mutex4GuarderList);
+				EscortGuarderList::iterator iter = m_guarderList.find(strGuarderId);
+				if (iter != m_guarderList.end()) {
+					Guarder * pGuarder = iter->second;
+					if (pGuarder) {
+						if (pMsg_->usMode == 0) {
+							strcpy_s(pGuarder->szBindDevice, sizeof(pGuarder->szBindDevice), strDeviceId.c_str());
+							pGuarder->usState = STATE_GUARDER_BIND;
+						}
+						else {
+							memset(pGuarder->szBindDevice, 0, sizeof(pGuarder->szBindDevice));
+							pGuarder->usState = STATE_GUARDER_FREE;
+						}
+					}
+				}
+				pthread_mutex_unlock(&m_mutex4GuarderList);
+			}
+			char szLog[512] = { 0 };
+			sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal bind message, deviceId=%s, orgId=%s, guarder=%s,"
+				" mode=%hu, datetime=%lu\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->szOrg, 
+				pMsg_->szGuarder, pMsg_->usMode, pMsg_->ulMessageTime);
+			writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		}
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicTaskSubmitMsg(TopicTaskMessage * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szTaskId) && strlen(pMsg_->szDeviceId) 
+		&& strlen(pMsg_->szGuarder) && pMsg_->ulMessageTime > 0) {
+		if (getLoadDeviceList() && getLoadGuarderList() && getLoadTaskList()) {
+			std::string strTaskId = pMsg_->szTaskId;
+			std::string strDeviceId = pMsg_->szDeviceId;
+			std::string strGuarderId = pMsg_->szGuarder;
+			char szDatetime[20] = { 0 };
+			formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+			{
+				pthread_mutex_lock(&m_mutex4TaskList);
+				EscortTaskList::iterator iter = m_taskList.find(strTaskId);
+				if (iter == m_taskList.end()) {
+					EscortTask * pTask = new EscortTask();
+					memset(pTask, 0, sizeof(EscortTask));
+					strcpy_s(pTask->szTaskId, sizeof(pTask->szTaskId), pMsg_->szTaskId);
+					strcpy_s(pTask->szDeviceId, sizeof(pTask->szDeviceId), pMsg_->szDeviceId);
+					strcpy_s(pTask->szFactoryId, sizeof(pTask->szFactoryId), pMsg_->szFactoryId);
+					strcpy_s(pTask->szGuarder, sizeof(pTask->szGuarder), pMsg_->szGuarder);
+					strcpy_s(pTask->szOrg, sizeof(pTask->szOrg), pMsg_->szOrg);
+					strcpy_s(pTask->szTarget, sizeof(pTask->szTarget), pMsg_->szTarget);
+					strcpy_s(pTask->szDestination, sizeof(pTask->szDestination), pMsg_->szDestination);
+					pTask->nTaskLimitDistance = (uint8_t)pMsg_->usTaskLimit;
+					pTask->nTaskType = (uint8_t)pMsg_->usTaskType;
+					if (strlen(pMsg_->szHandset)) {
+						strcpy_s(pTask->szHandset, sizeof(pTask->szHandset), pMsg_->szHandset);
+						pTask->nTaskMode = 1;
+					}
+					strcpy_s(pTask->szTaskStartTime, sizeof(pTask->szTaskStartTime), szDatetime);
+					m_taskList.emplace(strTaskId, pTask);
+				}
+				pthread_mutex_unlock(&m_mutex4TaskList);
+			}
+			{
+				pthread_mutex_lock(&m_mutex4DeviceList);
+				EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+				if (iter != m_deviceList.end()) {
+					WristletDevice * pDevice = iter->second;
+					if (pDevice) {
+						pDevice->deviceBasic.nStatus = DEV_GUARD;
+						if (pDevice->deviceBasic.nLooseStatus) {
+							pDevice->deviceBasic.nStatus += DEV_LOOSE;
+						}
+						if (pDevice->deviceBasic.nBattery < 20) {
+							pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
+						}
+					}
+				}
+				pthread_mutex_unlock(&m_mutex4DeviceList);
+			}
+			{
+				pthread_mutex_lock(&m_mutex4GuarderList);
+				EscortGuarderList::iterator iter = m_guarderList.find(strGuarderId);
+				if (iter != m_guarderList.end()) {
+					Guarder * pGuarder = iter->second;
+					if (pGuarder) {
+						pGuarder->usState = STATE_GUARDER_DUTY;
+						strcpy_s(pGuarder->szTaskId, sizeof(pGuarder->szTaskId), pMsg_->szTaskId);
+						strcpy_s(pGuarder->szTaskStartTime, sizeof(pGuarder->szTaskStartTime), szDatetime);
+					}
+				}
+				pthread_mutex_unlock(&m_mutex4GuarderList);
+			}
+			char szLog[512] = { 0 };
+			sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal submit task, taskId=%s, deviceId=%s, orgId=%s,"
+				" guarderId=%s, datetime=%lu\r\n", __FUNCTION__, __LINE__, pMsg_->szTaskId, pMsg_->szDeviceId,
+				pMsg_->szOrg, pMsg_->szGuarder, pMsg_->ulMessageTime);
+			writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+			char szPubMsg[512] = { 0 };
+			sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"taskId\":\"%s\",\"deviceId\":\"%s\","
+				"\"guarder\":\"%s\",\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_TASK_START, pMsg_->szTaskId, 
+				pMsg_->szDeviceId, pMsg_->szGuarder, szDatetime);
+			std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+			size_t nLen = strPubMsgUtf.size();
+			unsigned char * pPubMsg = new unsigned char[nLen + 1];
+			memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+			pPubMsg[nLen] = '\0';
+			encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+			std::string strDestURI = DEFAULT_PUBLISH_DEST;
+			m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+			sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish start task to %s, taskId=%s, deviceId=%s, "
+				"guarder=%s, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szTaskId,
+				pMsg_->szDeviceId, pMsg_->szGuarder, szDatetime);
+			writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+			delete [] pPubMsg;
+			pPubMsg = NULL;
+		}
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicTaskModifyMsg(TopicTaskModifyMessage * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szTaskId) && pMsg_->ulMessageTime > 0) {
+		std::string strTaskId = pMsg_->szTaskId;
+		pthread_mutex_lock(&m_mutex4TaskList);
+		EscortTaskList::iterator iter = m_taskList.find(strTaskId);
+		if (iter != m_taskList.end()) {
+			EscortTask * pTask = iter->second;
+			if (pTask) {
+				if (pTask->nTaskMode == 0) {
+					if (strlen(pMsg_->szHandset)) {
+						strcpy_s(pTask->szHandset, sizeof(pTask->szHandset), pMsg_->szHandset);
+						pTask->nTaskMode = 1;
+					}
+				}
+				else {
+					if (strlen(pMsg_->szHandset) == 0) {
+						memset(pTask->szHandset, 0, sizeof(pTask->szHandset));
+						pTask->nTaskMode = 0;
+					}
+					else {
+						if (strlen(pMsg_->szHandset) && strcmp(pMsg_->szHandset, pTask->szHandset) != 0) {
+							strcpy_s(pTask->szHandset, sizeof(pTask->szHandset), pMsg_->szHandset);
+						}
+					}
+				}
+			}
+		}
+		pthread_mutex_unlock(&m_mutex4TaskList);
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicTaskCloseMsg(TopicTaskCloseMessage * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szTaskId)) {
+		std::string strTaskId = pMsg_->szTaskId;
+		char szDeviceId[20] = { 0 };
+		char szGuarder[20] = { 0 };
+		char szDatetime[20] = { 0 };
+		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+		pthread_mutex_lock(&m_mutex4TaskList);
+		EscortTaskList::iterator iter = m_taskList.find(strTaskId);
+		if (iter != m_taskList.end()) {
+			EscortTask * pTask = iter->second;
+			if (pTask) {
+				strcpy_s(szDeviceId, sizeof(szDeviceId), pTask->szDeviceId);
+				strcpy_s(szGuarder, sizeof(szGuarder), pTask->szGuarder);
+				delete pTask;
+				pTask = NULL;
+			}
+			m_taskList.erase(iter);
+		}
+		pthread_mutex_unlock(&m_mutex4TaskList);
+		char szLog[512] = { 0 };
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal topic task close, taskId=%s, deviceId=%s, guarder=%s,"
+			" datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szTaskId, szDeviceId, szGuarder, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		char szPubMsg[512] = { 0 };
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"taskId\":\"%s\",\"deviceId\":\"%s\",\"guarder\":\"%s\","
+			"\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_TASK_STOP, pMsg_->szTaskId, szDeviceId, szGuarder,
+			szDatetime);
+		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+		size_t nLen = strPubMsgUtf.size();
+		unsigned char * pPubMsg = new unsigned char[nLen + 1];
+		memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+		pPubMsg[nLen] = '\0';
+		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+		std::string strDestURI = DEFAULT_PUBLISH_DEST;
+		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish close task to %s, taskId=%s, deviceId=%s, guarder=%s,"
+			"datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szTaskId, szDeviceId, szGuarder, 
+			szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		delete pPubMsg;
+		pPubMsg = NULL;
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicLocateAppMessage(TopicLocateMessageApp * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && strlen(pMsg_->szTaskId) && pMsg_->dLat > 0 && pMsg_->dLng > 0) {
+		std::string strDeviceId = pMsg_->szDeviceId;
+		char szDatetime[20] = { 0 };
+		char szGuarder[20] = { 0 };
+		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+		pthread_mutex_lock(&m_mutex4DeviceList);
+		EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+		if (iter != m_deviceList.end()) {
+			WristletDevice * pDevice = iter->second;
+			if (pDevice) {
+				strcpy_s(szGuarder, sizeof(szGuarder), pDevice->szBindGuard);
+				if (pDevice->deviceBasic.ulLastActiveTime < pMsg_->ulMessageTime) {
+					pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
+				}
+				if (pDevice->ulLastGuarderLocateTime < pMsg_->ulMessageTime) {
+					pDevice->ulLastGuarderLocateTime = pMsg_->ulMessageTime;
+					pDevice->devicePosition.dLatitude = pMsg_->dLat;
+					pDevice->devicePosition.dLngitude = pMsg_->dLng;
+					pDevice->devicePosition.nCoordinate = pMsg_->nCoordinate;
+				}
+			}
+		}
+		pthread_mutex_unlock(&m_mutex4DeviceList);
+		char szLog[512] = { 0 };
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal locate app message, deviceId=%s, taskId=%s, lat=%f, "
+			"lng=%f, coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->szTaskId,
+			pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		char szPubMsg[512] = { 0 };
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"guarder\":\"%s\","
+			"\"taskId\":\"%s\",\"lat\":%f,\"lng\":%f,\"coordinate\":%d,\"datetime\":\"%s\"}",
+			escort_protocol::CMD_PUB_DEVICE_LOCATE, LOCATE_APP, pMsg_->szDeviceId, szGuarder, pMsg_->szTaskId,
+			pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
+		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+		size_t nLen = strPubMsgUtf.size();
+		unsigned char * pPubMsg = new unsigned char[nLen + 1];
+		memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+		pPubMsg[nLen] = '\0';
+		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+		std::string strDestURI = DEFAULT_PUBLISH_DEST;
+		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish app locate to %s, deviceId=%s, taskId=%s, guarder=%s,"
+			" lat=%f, lng=%f, coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(),
+			pMsg_->szDeviceId, pMsg_->szTaskId, szGuarder, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		delete[] pPubMsg;
+		pPubMsg = NULL;
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicLocateGpsMessage(TopicLocateMessageGps * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && pMsg_->dLat > 0.0 && pMsg_->dLng > 0.0 && pMsg_->ulMessageTime > 0) {
+		std::string strDeviceId = pMsg_->szDeviceId;
+		char szDatetime[20] = { 0 };
+		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+		pthread_mutex_lock(&m_mutex4DeviceList);
+		EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+		if (iter != m_deviceList.end()) {
+			WristletDevice * pDevice = iter->second;
+			if (pDevice) {
+				if (pDevice->deviceBasic.ulLastActiveTime < pMsg_->ulMessageTime) {
+					pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
+					pDevice->deviceBasic.nBattery = pMsg_->usBattery;
+				}
+				if (pDevice->ulLastDeviceLocateTime < pMsg_->ulMessageTime) {
+					pDevice->ulLastDeviceLocateTime = pMsg_->ulMessageTime;
+					pDevice->devicePosition.dLatitude = pMsg_->dLat;
+					pDevice->devicePosition.dLngitude = pMsg_->dLng;
+					pDevice->devicePosition.nCoordinate = pMsg_->nCoordinate;
+					pDevice->nLastLocateType = LOCATE_GPS;
+				}
+			}
+		}
+		pthread_mutex_unlock(&m_mutex4DeviceList);
+		char szLog[512] = { 0 };
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal locate gps message, deviceId=%s, lat=%f, lng=%f, "
+			"coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng,
+			pMsg_->nCoordinate, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		char szPubMsg[512] = { 0 };
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"lat\":%f,\"lng\":%f,"
+			"\"coordinate\":%d,\"sattelite\":%hu,\"intensity\":%hu,\"speed\":%f,\"direction\":%d,\"datetime\":\"%s\"}",
+			escort_protocol::CMD_PUB_DEVICE_LOCATE, LOCATE_GPS, pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng,
+			pMsg_->nCoordinate, pMsg_->usStattelite, pMsg_->usIntensity, pMsg_->dSpeed, pMsg_->nDirection, szDatetime);
+		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+		size_t nLen = strPubMsgUtf.size();
+		unsigned char * pPubMsg = new unsigned char[nLen + 1];
+		memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+		pPubMsg[nLen] = '\0';
+		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+		std::string strDestURI = DEFAULT_PUBLISH_DEST;
+		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish gps locate to %s, deviceId=%s, lat=%f, lng=%f, "
+			"coordinate=%d, speed=%f, direction=%d, sattelite=%hu, intensity=%hu, datetime=%s\r\n", __FUNCTION__,
+			__LINE__, strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, 
+			pMsg_->dSpeed, pMsg_->nDirection, pMsg_->usStattelite, pMsg_->usIntensity, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		delete[] pPubMsg;
+		pPubMsg = NULL;
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicLocateLbsMessage(TopicLocateMessageLbs * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && pMsg_->dLat > 0.0 && pMsg_->dLng > 0.0 && pMsg_->ulMessageTime > 0) {
+		std::string strDeviceId = pMsg_->szDeviceId;
+		char szDatetime[20] = { 0 };
+		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+		pthread_mutex_lock(&m_mutex4DeviceList);
+		EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+		if (iter != m_deviceList.end()) {
+			WristletDevice * pDevice = iter->second;
+			if (pDevice) {
+				if (pDevice->deviceBasic.ulLastActiveTime < pMsg_->ulMessageTime) {
+					pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
+					pDevice->deviceBasic.nBattery = pMsg_->usBattery;
+				}
+				if (pDevice->ulLastDeviceLocateTime < pMsg_->ulMessageTime) {
+					pDevice->ulLastDeviceLocateTime = pMsg_->ulMessageTime;
+					pDevice->nLastLocateType = LOCATE_LBS;
+					pDevice->devicePosition.dLatitude = pMsg_->dLat;
+					pDevice->devicePosition.dLngitude = pMsg_->dLng;
+					pDevice->devicePosition.nCoordinate = pMsg_->nCoordinate;
+				}
+			}
+		}
+		pthread_mutex_unlock(&m_mutex4DeviceList);
+		char szLog[512] = { 0 };
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal locate lbs message, deviceId=%s, lat=%f, lng=%f, "
+			"coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng,
+			pMsg_->nCoordinate, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		char szPubMsg[512] = { 0 };
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"lat\":%f,\"lng\":%f,"
+			"\"coordinate\":%d,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_LOCATE, LOCATE_LBS, 
+			pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
+		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+		size_t nLen = strPubMsgUtf.size();
+		unsigned char * pPubMsg = new unsigned char[nLen + 1];
+		memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+		pPubMsg[nLen] = '\0';
+		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+		std::string strDestURI = DEFAULT_PUBLISH_DEST;
+		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish gps locate to %s, deviceId=%s, lat=%f, lng=%f, "
+			"coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, 
+			pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		delete[] pPubMsg;
+		pPubMsg = NULL;
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicAlarmLowpowerMessage(TopicAlarmMessageLowpower * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szDeviceId)) {
+		std::string strDeviceId = pMsg_->szDeviceId;
+		char szDatetime[20] = { 0 };
+		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+		pthread_mutex_lock(&m_mutex4DeviceList);
+		EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+		if (iter != m_deviceList.end()) {
+			WristletDevice * pDevice = iter->second;
+			if (pDevice) {
+				if (pDevice->deviceBasic.ulLastActiveTime < pMsg_->ulMessageTime) {
+					pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
+					pDevice->deviceBasic.nBattery = pMsg_->usBattery;
+					if (pMsg_->usMode == 0) {
+						pDevice->ulLastLowPowerAlertTime = pMsg_->ulMessageTime;
+					}
+				}
+			}
+		}
+		pthread_mutex_unlock(&m_mutex4DeviceList);
+		char szLog[512] = { 0 };
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alram lowpower message, deviceId=%s, battery=%hu, "
+			"mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode,
+			szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		char szPubMsg[512] = { 0 };
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"battery\":%hu,"
+			"\"mode\":%hu,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_ALARM, ALARM_DEVICE_LOWPOWER, 
+			pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode, szDatetime);
+		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+		size_t nLen = strPubMsgUtf.size();
+		unsigned char * pPubMsg = new unsigned char[nLen + 1];
+		memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+		pPubMsg[nLen] = '\0';
+		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+		std::string strDestURI = DEFAULT_PUBLISH_DEST;
+		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish alarm lowpower to %s, deviceId=%s, battery=%hu, "
+			"mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, 
+			pMsg_->usBattery, pMsg_->usMode, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		delete[] pPubMsg;
+		pPubMsg = NULL;
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicAlarmLooseMsg(TopicAlarmMessageLoose * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && pMsg_->ulMessageTime > 0)  {
+		std::string strDeviceId = pMsg_->szDeviceId;
+		char szDatetime[20] = { 0 };
+		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+		pthread_mutex_lock(&m_mutex4DeviceList);
+		EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+		if (iter != m_deviceList.end()) {
+			WristletDevice * pDevice = iter->second;
+			if (pDevice) {
+				if (pDevice->deviceBasic.ulLastActiveTime < pMsg_->ulMessageTime) {
+					pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
+					pDevice->deviceBasic.nBattery = pMsg_->usBattery;
+					if (pMsg_->usMode == 0) {
+						pDevice->ulLastLooseAlertTime = pMsg_->ulMessageTime;
+						pDevice->deviceBasic.nLooseStatus = 1;
+						pDevice->deviceBasic.nStatus += DEV_LOOSE;
+					}
+					else {
+						pDevice->deviceBasic.nLooseStatus = 0;
+						pDevice->deviceBasic.nStatus -= DEV_LOOSE;
+					}
+				}
+			}
+		}
+		pthread_mutex_unlock(&m_mutex4DeviceList);
+		char szLog[512] = { 0 };
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alram loose message, deviceId=%s, battery=%hu, mode=%hu, "
+			"datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		char szPubMsg[512] = { 0 };
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"battery\":%hu,"
+			"\"mode\":%d,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_ALARM, ALARM_DEVICE_LOOSE, 
+			pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode, szDatetime);
+		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+		size_t nLen = strPubMsgUtf.size();
+		unsigned char * pPubMsg = new unsigned char[nLen + 1];
+		memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+		pPubMsg[nLen] = '\0';
+		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+		std::string strDestURI = DEFAULT_PUBLISH_DEST;
+		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish loose message to %s, deviceId=%s, battery=%hu, mode=%hu,"
+			"datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->usBattery,
+			pMsg_->usMode, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		delete[] pPubMsg;
+		pPubMsg = NULL;
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicAlarmFleeMsg(TopicAlarmMessageFlee * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && strlen(pMsg_->szTaskId) && pMsg_->ulMessageTime > 0) {
+		std::string strDeviceId = pMsg_->szDeviceId;
+		std::string strTaskId = pMsg_->szTaskId;
+		char szDatetime[20] = { 0 };
+		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+		{
+			pthread_mutex_lock(&m_mutex4DeviceList);
+			EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+			if (iter != m_deviceList.end()) {
+				WristletDevice * pDevice = iter->second;
+				if (pDevice) {
+					if (pDevice->deviceBasic.ulLastActiveTime < pMsg_->ulMessageTime) {
+						pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
+						pDevice->deviceBasic.nBattery = pMsg_->usBattery;
+						if (pMsg_->usMode = 0) {
+							pDevice->ulLastFleeAlertTime = pMsg_->ulMessageTime;
+							pDevice->deviceBasic.nStatus = DEV_FLEE;
+						}
+						else {
+							pDevice->deviceBasic.nStatus = DEV_GUARD;
+						}
+						if (pDevice->deviceBasic.nBattery < 20) {
+							pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
+						}
+						if (pDevice->deviceBasic.nLooseStatus == 1) {
+							pDevice->deviceBasic.nStatus += DEV_LOOSE;
+						}
+					}
+				}
+			}
+			pthread_mutex_unlock(&m_mutex4DeviceList);
+		}
+		{
+			pthread_mutex_lock(&m_mutex4TaskList);
+			EscortTaskList::iterator iter = m_taskList.find(strTaskId);
+			if (iter != m_taskList.end()) {
+				EscortTask * pTask = iter->second;
+				if (pTask) {
+					if (pMsg_->usMode == 0) {
+						pTask->nTaskFlee = 1;
+					}
+					else {
+						pTask->nTaskFlee = 0;
+					}
+				}
+			}
+			pthread_mutex_unlock(&m_mutex4TaskList);
+		}
+		char szLog[512] = { 0 };
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alarm flee, deviceId=%s, taskId=%s, mode=%hu, "
+			"guarder=%s, datetime=%s", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->szTaskId, pMsg_->usMode,
+			pMsg_->szGuarder, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		char szPubMsg[512] = { 0 };
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"taskId\":\"%s\","
+			"\"guarder\":\"%s\",\"mode\":%hu,\"battery\":%hu,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_ALARM,
+			ALARM_DEVICE_FLEE, pMsg_->szDeviceId, pMsg_->szTaskId, pMsg_->szGuarder, pMsg_->usMode, pMsg_->usBattery,
+			szDatetime);
+		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
+		size_t nLen = strPubMsgUtf.size();
+		unsigned char * pPubMsg = new unsigned char[nLen + 1];
+		memcpy_s(pPubMsg, nLen + 1, strPubMsgUtf.c_str(), nLen);
+		pPubMsg[nLen] = '\0';
+		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
+		std::string strDestURI = DEFAULT_PUBLISH_DEST;
+		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish flee message to %s, deviceId=%s, taskId=%s, guarder=%s "
+			" battery=%hu, mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, 
+			pMsg_->szTaskId, pMsg_->szGuarder, pMsg_->usBattery, pMsg_->usMode, szDatetime);
+		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+		delete[] pPubMsg;
+		pPubMsg = NULL;
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicAlarmLocateLostMsg(TopicAlarmMessageLocateLost * pMsg_)
+{
+
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicAlarmFenceMsg(TopicAlarmMessageFence * pMsg_)
+{
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && strlen(pMsg_->szFenceTaskId) && strlen(pMsg_->szFenceId)) {
+		std::string strDeviceId = pMsg_->szDeviceId;
+		char szDatetime[20] = { 0 };
+		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
+		pthread_mutex_lock(&m_mutex4DeviceList);
+		EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+		if (iter != m_deviceList.end()) {
+			WristletDevice * pDevice = iter->second;
+			if (pDevice) {
+				if (pMsg_->nMode == 0) {
+					pDevice->nDeviceFenceState = 1;
+				}
+				else {
+					pDevice->nDeviceFenceState = 0;
+				}
+			}
+		}
+		pthread_mutex_unlock(&m_mutex4DeviceList);
+	}
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicLoginMsg(TopicLoginMessage * pMsg_)
+{
+
+}
+
+void expand_protocol::ExpandProtocolService::handleTopicLogoutMsg(TopicLogoutMessage * pMsg_)
+{
+
 }
 
 bool expand_protocol::ExpandProtocolService::addInteractMessage(InteractionMessage * pInteractMsg_)
@@ -2120,16 +3615,16 @@ void expand_protocol::ExpandProtocolService::dealInteractMessage()
 														m_guarderList.emplace((std::string)pGuarder->szId, pGuarder);
 														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load guarder, id=%s, name=%s,"
 															" roleType=%hu, state=%hu, session=%s, org=%s, device=%s, task=%s, "
-															"startTime=%s\r\n", guarder.szId, guarder.szTagName, guarder.usRoleType,
-															guarder.usState, guarder.szCurrentSession, guarder.szOrg,
+															"startTime=%s\r\n", __FUNCTION__, __LINE__, guarder.szId, guarder.szTagName, 
+															guarder.usRoleType, guarder.usState, guarder.szCurrentSession, guarder.szOrg,
 															guarder.szBindDevice, guarder.szTaskId, guarder.szTaskStartTime);
 														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 													}
 													else {
 														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load guarder data miss, id=%s,"
 															" name=%s, roleType=%hu, state=%hu, session=%s, org=%s, device=%s, task=%s, "
-															"startTime=%s\r\n", guarder.szId, guarder.szTagName, guarder.usRoleType,
-															guarder.usState, guarder.szCurrentSession, guarder.szOrg,
+															"startTime=%s\r\n", __FUNCTION__, __LINE__, guarder.szId, guarder.szTagName, 
+															guarder.usRoleType, guarder.usState, guarder.szCurrentSession, guarder.szOrg,
 															guarder.szBindDevice, guarder.szTaskId, guarder.szTaskStartTime);
 														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 													}
@@ -2441,7 +3936,7 @@ void expand_protocol::ExpandProtocolService::handleTaskStart(expand_protocol::Re
 			result = escort_protocol::ERROR_GUARDER_LIST_NOT_LOAD;
 		}
 		if (bValidGuarder) {
-			if (getLoadDeviceList) {
+			if (getLoadDeviceList()) {
 				pthread_mutex_lock(&m_mutex4DeviceList);
 				expand_protocol::EscortDeviceList::iterator iter = m_deviceList.find(strDevice);
 				if (iter != m_deviceList.end()) {
@@ -2568,7 +4063,7 @@ void expand_protocol::ExpandProtocolService::handleTaskStart(expand_protocol::Re
 		unsigned char * pReplyData = new unsigned char[nLen + 1];
 		memcpy_s(pReplyData, nLen + 1, strReplyUtf.c_str(), nLen);
 		pReplyData[nLen] = '\0';
-		encryptMessage(pReplyData, 0, nLen, 0xea);
+		encryptMessage(pReplyData, 0, nLen, kRepSafeKey);
 		m_pRepMsgProducer->send(strDestURI, pReplyData, nLen);
 		char szLog[512] = { 0 };
 		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deviceId=%s, guarder=%s, target=%s, destination=%s, "
@@ -2668,7 +4163,6 @@ void expand_protocol::ExpandProtocolService::handleTaskStop(expand_protocol::Req
 		if (strDestURI.empty()) {
 			strDestURI = DEFAULT_LISTEN_DEST;
 		}
-		char szReply[256] = { 0 };
 		sprintf_s(szReply, sizeof(szReply), "{\"cmd\":%d,\"retcode\":%d,\"seq\":%u,\"reqTime\":\"%s\","
 			"\"taskId\":\"%s\"}", escort_protocol::CMD_STOP_TASK_REQ, result, pReqStopTask_->usReqSeq,
 			pReqStopTask_->szRequestTime, pReqStopTask_->szTaskId);
@@ -2677,7 +4171,7 @@ void expand_protocol::ExpandProtocolService::handleTaskStop(expand_protocol::Req
 		unsigned char * pReplyData = new unsigned char[nLen + 1];
 		memcpy_s(pReplyData, nLen + 1, strReplyUtf.c_str(), nLen);
 		pReplyData[nLen] = '\0';
-		encryptMessage(pReplyData, 0, nLen, 0xea);
+		encryptMessage(pReplyData, 0, nLen, kRepSafeKey);
 		m_pRepMsgProducer->send(strDestURI, pReplyData, nLen);
 		char szLog[512] = { 0 };
 		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]taskId=%s, deviceId=%s, guarderId=%s, datetime=%s, "
@@ -2987,3 +4481,76 @@ void expand_protocol::ExpandProtocolService::generateTaskId(char * pTaskId_, uns
 	}
 }
 
+void expand_protocol::consumerMsgCb(std::string strDest_, unsigned char * pMsgData_, unsigned int uiDataLen_,
+	void * pUserData_)
+{
+	expand_protocol::ExpandProtocolService * pService = (expand_protocol::ExpandProtocolService *)pUserData_;
+	if (pService) {
+		expand_protocol::ConsumerMessage  * pConsumerMsg = new expand_protocol::ConsumerMessage();
+		pConsumerMsg->strDestURI = strDest_;
+		pConsumerMsg->pData = new unsigned char[uiDataLen_ + 1];
+		memcpy_s(pConsumerMsg->pData, uiDataLen_ + 1, pMsgData_, uiDataLen_);
+		pConsumerMsg->pData[uiDataLen_] = '\0';
+		pConsumerMsg->uiDataLen = uiDataLen_;
+		if (!pService->addConsumerMessage(pConsumerMsg)) {
+			if (pConsumerMsg) {
+				if (pConsumerMsg->pData) {
+					delete[] pConsumerMsg->pData;
+					pConsumerMsg->pData = NULL;
+				}
+				delete pConsumerMsg;
+				pConsumerMsg = NULL;
+			}
+		}
+	}
+}
+
+void * expand_protocol::startDealConsumerMessageThread(void * param_)
+{
+	expand_protocol::ExpandProtocolService * pService = (expand_protocol::ExpandProtocolService *)param_;
+	if (pService) {
+		pService->dealConsumerMessage();
+	}
+	pthread_exit(NULL);
+	return NULL;
+}
+
+void * expand_protocol::startDealInteractMessageThread(void * param_)
+{
+	expand_protocol::ExpandProtocolService * pService = (expand_protocol::ExpandProtocolService *)param_;
+	if (pService) {
+		pService->dealInteractMessage();
+	}
+	pthread_exit(NULL);
+	return NULL;
+}
+
+void * expand_protocol::startDealTopicMessageThread(void * param_)
+{
+	expand_protocol::ExpandProtocolService * pService = (expand_protocol::ExpandProtocolService *)param_;
+	if (pService) {
+		pService->dealTopicMessage();
+	}
+	pthread_exit(NULL);
+	return NULL;
+}
+
+void * expand_protocol::startDealLogThread(void * param_)
+{
+	expand_protocol::ExpandProtocolService * pService = (expand_protocol::ExpandProtocolService *)param_;
+	if (pService) {
+		pService->dealLog();
+	}
+	pthread_exit(NULL);
+	return NULL;
+}
+
+void * expand_protocol::startNetworkThread(void * param_)
+{
+	expand_protocol::ExpandProtocolService * pService = (expand_protocol::ExpandProtocolService *)param_;
+	if (pService) {
+		pService->dealNetwork();
+	}
+	pthread_exit(NULL);
+	return NULL;
+}

@@ -22,7 +22,7 @@
     <ProjectGuid>{08120F41-5111-4DE0-8460-849DF25F847B}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>EscortExpandProtocol</RootNamespace>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.15063.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -89,12 +89,12 @@
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;ESCORTEXPANDPROTOCOL_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>..\inc;..\inc\apr\include;..\inc\apr\include\arch;..\inc\apr\include\arch\win32;..\inc\apr\include\arch\unix;C:\D\apps\vs2015\Escort\include\czmq;C:\D\apps\vs2015\Escort\include\zeromq;C:\D\apps\vs2015\Escort\include\pfLog;C:\D\apps\vs2015\Escort\include\rapidjson;C:\D\apps\vs2015\Escort\include\pthread;C:\D\apps\vs2015\Escort\include\escort;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\inc;..\inc\apr\include;C:\D\apps\vs2015\Escort\include\czmq;C:\D\apps\vs2015\Escort\include\zeromq;C:\D\apps\vs2015\Escort\include\pfLog;C:\D\apps\vs2015\Escort\include\rapidjson;C:\D\apps\vs2015\Escort\include\pthread;C:\D\apps\vs2015\Escort\include\escort;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\D\Apps\SelfApps\vs2015\Escort\lib\debug;..\lib\Debug;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\D\Apps\vs2015\Escort\lib\debug;..\lib\Debug;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <ModuleDefinitionFile>EscortExpandProtocol.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
@@ -106,11 +106,13 @@
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>_DEBUG;_WINDOWS;_USRDLL;ESCORTEXPANDPROTOCOL_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <AdditionalIncludeDirectories>..\inc;..\inc\apr\include;C:\D\apps\vs2015\Escort\include\czmq;C:\D\apps\vs2015\Escort\include\zeromq;C:\D\apps\vs2015\Escort\include\pfLog;C:\D\apps\vs2015\Escort\include\rapidjson;C:\D\apps\vs2015\Escort\include\pthread;C:\D\apps\vs2015\Escort\include\escort;</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ModuleDefinitionFile>EscortExpandProtocol.def</ModuleDefinitionFile>
+      <AdditionalLibraryDirectories>..\lib\x64\debug;C:\d\apps\vs2015\Escort\lib\x64\debug;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -123,6 +125,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;ESCORTEXPANDPROTOCOL_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <AdditionalIncludeDirectories>..\inc;..\inc\apr\include;C:\D\apps\vs2015\Escort\include\czmq;C:\D\apps\vs2015\Escort\include\zeromq;C:\D\apps\vs2015\Escort\include\pfLog;C:\D\apps\vs2015\Escort\include\rapidjson;C:\D\apps\vs2015\Escort\include\pthread;C:\D\apps\vs2015\Escort\include\escort;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -130,6 +133,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <ModuleDefinitionFile>EscortExpandProtocol.def</ModuleDefinitionFile>
+      <AdditionalLibraryDirectories>C:\d\apps\vs2015\EscortExpandProtocol\lib\release;C:\d\apps\vs2015\Escort\lib\release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -142,6 +146,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;ESCORTEXPANDPROTOCOL_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <AdditionalIncludeDirectories>..\inc;..\inc\apr\include;C:\D\apps\vs2015\Escort\include\czmq;C:\D\apps\vs2015\Escort\include\zeromq;C:\D\apps\vs2015\Escort\include\pfLog;C:\D\apps\vs2015\Escort\include\rapidjson;C:\D\apps\vs2015\Escort\include\pthread;C:\D\apps\vs2015\Escort\include\escort;</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -149,6 +154,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <ModuleDefinitionFile>EscortExpandProtocol.def</ModuleDefinitionFile>
+      <AdditionalLibraryDirectories>..\lib\x64\release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
