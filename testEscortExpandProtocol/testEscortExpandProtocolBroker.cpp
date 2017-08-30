@@ -107,10 +107,11 @@ int main(int argc, char ** argv)
         szMsgSrvIp, usMsgPort, usInteractPort, szBrokerURI);
       while (1) {
         char c = 0;
-        sscanf_s("%c", &c, 1);
+        scanf_s("%c", &c, 1);
         if (c == 'q' || c == 'Q') {
           break;
         }
+        Sleep(200);
       }
       int nVal = EEP_Stop(nInstVal);
       printf("EEP_STOP: %d\n", nVal);

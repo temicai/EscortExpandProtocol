@@ -38,6 +38,7 @@ namespace escort_protocol
 		ERROR_GUARDER_LIST_NOT_LOAD = 20,
 		ERROR_TASK_IN_WARN_SITUATION = 21,
 		ERROR_TASK_NOT_EXISTS = 22,
+    ERROR_REQUEST_TIME_EXPIRED = 99,
 	};
 
 	enum eTaskType
@@ -46,6 +47,22 @@ namespace escort_protocol
 		TASK_TYPE_MEIDICAL = 1,
 		TASK_TYPE_IDENTITY = 2,
 	};
+
+  enum eAlarmType
+  {
+    E_ALARM_TYPE_DEVICE_LOWPOWER = 1,		//低电量告警
+    E_ALARM_TYPE_DEVICE_FLEE = 3,				//设备脱管告警
+    E_ALARM_TYPE_DEVICE_FENCE = 4,				//设备围栏告警
+    E_ALARM_TYPE_DEVICE_LOOSE = 5,				//设备宽松
+  };
+
+  enum eLocateType
+  {
+    E_LOCATE_GPS = 1,
+    E_LOCATE_LBS = 2,
+    E_LOCATE_APP = 3,
+  };
+
 
 }
 

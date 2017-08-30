@@ -211,10 +211,16 @@ void expand_protocol::SimpleProducer::close()
 }
 
 void expand_protocol::SimpleProducer::send(std::string strDest_, unsigned char * pData_,
-	unsigned int uiDataLen_)
+	unsigned int uiDataLen_, bool bTopic_)
 {
 	if (!strDest_.empty() && pData_ && uiDataLen_ && m_session) {
-		cms::Destination * destination = m_session->createTopic(strDest_);
+    cms::Destination * destination = NULL;
+    if (bTopic_) {
+      destination = m_session->createTopic(strDest_);
+    }
+    else {
+      destination = m_session->createQueue(strDest_);
+    }
 		cms::MessageProducer * producer = m_session->createProducer(destination);
 		cms::BytesMessage * bytesMsg = m_session->createBytesMessage(pData_, (int)uiDataLen_);
 		try {
@@ -232,10 +238,17 @@ void expand_protocol::SimpleProducer::send(std::string strDest_, unsigned char *
 	}
 }
 
-void expand_protocol::SimpleProducer::send(std::string strDest_, std::string strData_)
+void expand_protocol::SimpleProducer::send(std::string strDest_, std::string strData_, 
+  bool bTopic_)
 {
 	if (!strData_.empty() && !strDest_.empty()) {
-		cms::Destination * destination = m_session->createTopic(strDest_);
+    cms::Destination * destination = NULL; 
+    if (bTopic_) {
+      destination = m_session->createTopic(strDest_);
+    }
+    else {
+      destination = m_session->createQueue(strDest_);
+    }
 		cms::MessageProducer * producer = m_session->createProducer(destination);
 		TextMessage * txtMsg = m_session->createTextMessage(strData_);
 		try {
@@ -342,10 +355,11 @@ expand_protocol::ExpandProtocolService::ExpandProtocolService(const char * pDllD
 	strcat_s(szPath, sizeof(szPath), "ExpandProtocolBroker\\");
 	CreateDirectoryExA(".\\", szPath, NULL);
 	m_uiLogInst = LOG_Init();
+  m_usLogType = pf_logger::eLOGTYPE_FILE;
 	if (m_uiLogInst) {
 		pf_logger::LogConfig logConf;
 		logConf.usLogPriority = pf_logger::eLOGPRIO_ALL;
-		logConf.usLogType = pf_logger::eLOGTYPE_FILE;
+		logConf.usLogType = m_usLogType;
 		strcpy_s(logConf.szLogPath, sizeof(logConf.szLogPath), szPath);
 		LOG_SetConfig(m_uiLogInst, logConf);
 	}
@@ -441,7 +455,7 @@ int expand_protocol::ExpandProtocolService::Start(const char * pMsgSrvIp_, unsig
 	if (m_pthdDealTopicMsg.p == NULL) {
 		pthread_create(&m_pthdDealTopicMsg, NULL, startDealTopicMessageThread, this);
 	}
-	if (m_pthdDealInteractorMsg.p = NULL) {
+	if (m_pthdDealInteractorMsg.p == NULL) {
 		pthread_create(&m_pthdDealInteractorMsg, NULL, startDealInteractMessageThread, this);
 	}
 	if (m_pthdDealNetwork.p == NULL) {
@@ -516,22 +530,26 @@ int expand_protocol::ExpandProtocolService::Stop()
 		m_pthdDealNetwork.p = NULL;
 	}
 
-	if (m_pthdDealNetwork.p) {
-		pthread_join(m_pthdDealNetwork, NULL);
+	if (m_pthdDealLog.p) {
+    pthread_cond_broadcast(&m_cond4LogQue);
+		pthread_join(m_pthdDealLog, NULL);
 		m_pthdDealNetwork.p = NULL;
 	}
 
 	if (m_pthdDealTopicMsg.p) {
+    pthread_cond_broadcast(&m_cond4TopicMsgQue);
 		pthread_join(m_pthdDealTopicMsg, NULL);
 		m_pthdDealTopicMsg.p = NULL;
 	}
 
 	if (m_pthdDealInteractorMsg.p) {
+    pthread_cond_broadcast(&m_cond4InteractMsgQue);
 		pthread_join(m_pthdDealInteractorMsg, NULL);
 		m_pthdDealInteractorMsg.p = NULL;
 	}
 
 	if (m_pthdDealConsumerMsg.p) {
+    pthread_cond_broadcast(&m_cond4ConsumerMsgQue);
 		pthread_join(m_pthdDealConsumerMsg, NULL);
 		m_pthdDealConsumerMsg.p = NULL;
 	}
@@ -711,9 +729,9 @@ void expand_protocol::ExpandProtocolService::dealConsumerMessage()
 				if (!doc.Parse(ansiStr.c_str()).HasParseError()) {
 					unsigned short usCmd;
 					std::string strDestURI;
-					if (doc.HasMember("nCmd")) {
-						if (doc["nCmd"].IsInt()) {
-							usCmd = (unsigned short)doc["nCmd"].GetInt();
+					if (doc.HasMember("cmd")) {
+						if (doc["cmd"].IsInt()) {
+							usCmd = (unsigned short)doc["cmd"].GetInt();
 						}
 					}
 					if (doc.HasMember("destURI")) {
@@ -766,8 +784,8 @@ void expand_protocol::ExpandProtocolService::dealConsumerMessage()
 								}
 							}
 							if (doc.HasMember("seq")) {
-								if (doc["req"].IsInt()) {
-									reqStartTask.usReqSeq = (unsigned short)doc["req"].GetInt();
+								if (doc["seq"].IsInt()) {
+									reqStartTask.usReqSeq = (unsigned short)doc["seq"].GetInt();
 								}
 							}
 							if (doc.HasMember("limit")) {
@@ -988,7 +1006,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 								}
 								if (doc.HasMember("direction")) {
 									if (doc["direction"].IsInt()) {
-										locateGps.nDirection = doc["latitude"].GetInt();
+										locateGps.nDirection = doc["direction"].GetInt();
 									}
 								}
 								if (doc.HasMember("latType")) {
@@ -1765,77 +1783,79 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 							}
 							switch (nSubType) {
 								case TASK_OPT_SUBMIT: {
-									TopicTaskMessage taskMsg;
-									memset(&taskMsg, 0, sizeof(taskMsg));
-									char szDatetime[20] = { 0 };
-									if (doc.HasMember("taskId")) {
-										if (doc["taskId"].IsString() && doc["taskId"].GetStringLength()) {
-											strcpy_s(taskMsg.szTaskId, sizeof(taskMsg.szTaskId), doc["taskId"].GetString());
-										}
-									}
-									if (doc.HasMember("factoryId")) {
-										if (doc["factoryId"].IsString() && doc["factoryId"].GetStringLength()) {
-											strcpy_s(taskMsg.szFactoryId, sizeof(taskMsg.szFactoryId), doc["factoryId"].GetString());
-										}
-									}
-									if (doc.HasMember("deviceId")) {
-										if (doc["deviceId"].IsString() && doc["deviceId"].GetStringLength()) {
-											strcpy_s(taskMsg.szDeviceId, sizeof(taskMsg.szDeviceId), doc["deviceId"].GetString());
-										}
-									}
-									if (doc.HasMember("orgId")) {
-										if (doc["orgId"].IsString() && doc["orgId"].GetStringLength()) {
-											strcpy_s(taskMsg.szOrg, sizeof(taskMsg.szOrg), doc["orgId"].GetString());
-										}
-									}
-									if (doc.HasMember("guarder")) {
-										if (doc["guarder"].IsString() && doc["guarder"].GetStringLength()) {
-											strcpy_s(taskMsg.szGuarder, sizeof(taskMsg.szGuarder), doc["guarder"].GetString());
-										}
-									}
-									if (doc.HasMember("taskType")) {
-										if (doc["taskType"].IsInt()) {
-											taskMsg.usTaskType = (unsigned short)doc["taskType"].GetInt();
-										}
-									}
-									if (doc.HasMember("limit")) {
-										if (doc["limit"].IsInt()) {
-											taskMsg.usTaskLimit = (unsigned short)doc["limit"].GetInt();
-										}
-									}
-									if (doc.HasMember("destination")) {
-										if (doc["destination"].IsString() && doc["destination"].GetStringLength()) {
-											strcpy_s(taskMsg.szDestination, sizeof(taskMsg.szDestination), 
-												doc["destination"].GetString());
-										}
-									}
-									if (doc.HasMember("target")) {
-										if (doc["target"].IsString() && doc["target"].GetStringLength()) {
-											strcpy_s(taskMsg.szTarget, sizeof(taskMsg.szTarget), doc["target"].GetString());
-										}
-									}
-									if (doc.HasMember("handset")) {
-										if (doc["handset"].IsString() && doc["handset"].GetStringLength()) {
-											strcpy_s(taskMsg.szHandset, sizeof(taskMsg.szHandset), doc["handset"].GetString());
-										}
-									}
-									if (doc.HasMember("datetime")) {
-										if (doc["datetime"].IsString() && doc["datetime"].GetStringLength()) {
-											taskMsg.ulMessageTime = makeDatetime(doc["datetime"].GetString());
-										}
-									}
-									if (strlen(taskMsg.szDeviceId) && strlen(taskMsg.szTaskId) && strlen(taskMsg.szGuarder)
-										&& strlen(taskMsg.szOrg) && taskMsg.ulMessageTime > 0){
-										handleTopicTaskSubmitMsg(&taskMsg);
-									}
-									else {
-										sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic task message data miss parameter,"
-											" taskId=%s, guarder=%s, deviceId=%s, factoryId=%s, datetime=%s, msgTopic=%s, msgSeq=%hu, "
-											"msgUuid=%s, msgFrom=%s\r\n", __FUNCTION__, __LINE__, taskMsg.szTaskId, taskMsg.szGuarder,
-											taskMsg.szDeviceId, taskMsg.szFactoryId, szDatetime, pTopicMsg->szMsgMark, 
-											pTopicMsg->usMsgSequence, pTopicMsg->szMsgUuid, pTopicMsg->szMsgFrom);
-										writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
-									}
+                  if (strcmp(pTopicMsg->szMsgFrom, m_szInteractorIdentity) != 0) {
+                    TopicTaskMessage taskMsg;
+                    memset(&taskMsg, 0, sizeof(taskMsg));
+                    char szDatetime[20] = { 0 };
+                    if (doc.HasMember("taskId")) {
+                      if (doc["taskId"].IsString() && doc["taskId"].GetStringLength()) {
+                        strcpy_s(taskMsg.szTaskId, sizeof(taskMsg.szTaskId), doc["taskId"].GetString());
+                      }
+                    }
+                    if (doc.HasMember("factoryId")) {
+                      if (doc["factoryId"].IsString() && doc["factoryId"].GetStringLength()) {
+                        strcpy_s(taskMsg.szFactoryId, sizeof(taskMsg.szFactoryId), doc["factoryId"].GetString());
+                      }
+                    }
+                    if (doc.HasMember("deviceId")) {
+                      if (doc["deviceId"].IsString() && doc["deviceId"].GetStringLength()) {
+                        strcpy_s(taskMsg.szDeviceId, sizeof(taskMsg.szDeviceId), doc["deviceId"].GetString());
+                      }
+                    }
+                    if (doc.HasMember("orgId")) {
+                      if (doc["orgId"].IsString() && doc["orgId"].GetStringLength()) {
+                        strcpy_s(taskMsg.szOrg, sizeof(taskMsg.szOrg), doc["orgId"].GetString());
+                      }
+                    }
+                    if (doc.HasMember("guarder")) {
+                      if (doc["guarder"].IsString() && doc["guarder"].GetStringLength()) {
+                        strcpy_s(taskMsg.szGuarder, sizeof(taskMsg.szGuarder), doc["guarder"].GetString());
+                      }
+                    }
+                    if (doc.HasMember("taskType")) {
+                      if (doc["taskType"].IsInt()) {
+                        taskMsg.usTaskType = (unsigned short)doc["taskType"].GetInt();
+                      }
+                    }
+                    if (doc.HasMember("limit")) {
+                      if (doc["limit"].IsInt()) {
+                        taskMsg.usTaskLimit = (unsigned short)doc["limit"].GetInt();
+                      }
+                    }
+                    if (doc.HasMember("destination")) {
+                      if (doc["destination"].IsString() && doc["destination"].GetStringLength()) {
+                        strcpy_s(taskMsg.szDestination, sizeof(taskMsg.szDestination),
+                          doc["destination"].GetString());
+                      }
+                    }
+                    if (doc.HasMember("target")) {
+                      if (doc["target"].IsString() && doc["target"].GetStringLength()) {
+                        strcpy_s(taskMsg.szTarget, sizeof(taskMsg.szTarget), doc["target"].GetString());
+                      }
+                    }
+                    if (doc.HasMember("handset")) {
+                      if (doc["handset"].IsString() && doc["handset"].GetStringLength()) {
+                        strcpy_s(taskMsg.szHandset, sizeof(taskMsg.szHandset), doc["handset"].GetString());
+                      }
+                    }
+                    if (doc.HasMember("datetime")) {
+                      if (doc["datetime"].IsString() && doc["datetime"].GetStringLength()) {
+                        taskMsg.ulMessageTime = makeDatetime(doc["datetime"].GetString());
+                      }
+                    }
+                    if (strlen(taskMsg.szDeviceId) && strlen(taskMsg.szTaskId) && strlen(taskMsg.szGuarder)
+                      && strlen(taskMsg.szOrg) && taskMsg.ulMessageTime > 0) {
+                      handleTopicTaskSubmitMsg(&taskMsg);
+                    }
+                    else {
+                      sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse Topic task message data miss parameter,"
+                        " taskId=%s, guarder=%s, deviceId=%s, factoryId=%s, datetime=%s, msgTopic=%s, msgSeq=%hu, "
+                        "msgUuid=%s, msgFrom=%s\r\n", __FUNCTION__, __LINE__, taskMsg.szTaskId, taskMsg.szGuarder,
+                        taskMsg.szDeviceId, taskMsg.szFactoryId, szDatetime, pTopicMsg->szMsgMark,
+                        pTopicMsg->usMsgSequence, pTopicMsg->szMsgUuid, pTopicMsg->szMsgFrom);
+                      writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+                    }
+                  }
 									break;
 								}
 								case TASK_OPT_MODIFY: {
@@ -1870,35 +1890,37 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 									break;
 								}
 								case TASK_OPT_CLOSE: {
-									TopicTaskCloseMessage taskCloseMsg;
-									memset(&taskCloseMsg, 0, sizeof(TopicTaskCloseMessage));
-									if (doc.HasMember("taskId")) {
-										if (doc["taskId"].IsString() && doc["taskId"].GetStringLength()) {
-											strcpy_s(taskCloseMsg.szTaskId, sizeof(taskCloseMsg.szTaskId), doc["taskId"].GetString());
-										}
-									}
-									if (doc.HasMember("state")) {
-										if (doc["state"].IsInt()) {
-											taskCloseMsg.nClose = doc["state"].GetInt();
-										}
-									}
-									if (doc.HasMember("datetime")) {
-										if (doc["datetime"].IsString() && doc["datetime"].GetStringLength()) {
-											taskCloseMsg.ulMessageTime = makeDatetime(doc["datetime"].GetString());
-										}
-									}
-									if (strlen(taskCloseMsg.szTaskId) && taskCloseMsg.ulMessageTime > 0) {
-										handleTopicTaskCloseMsg(&taskCloseMsg);
-									}
-									else {
-										sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse topic task close message miss "
-											"parameter, taskId=%s, state=%d, datetime=%lu, msgTopic=%s, msgSeq=%hu, msgUuid=%s, "
-											"msgFrom=%s\r\n", __FUNCTION__, __LINE__, taskCloseMsg.szTaskId, taskCloseMsg.nClose,
-											taskCloseMsg.ulMessageTime, pTopicMsg->szMsgMark, pTopicMsg->usMsgSequence, 
-											pTopicMsg->szMsgUuid, pTopicMsg->szMsgFrom);
-										writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
-									}
-									break;
+                  if (strcmp(pTopicMsg->szMsgFrom, m_szInteractorIdentity) != 0) {
+                    TopicTaskCloseMessage taskCloseMsg;
+                    memset(&taskCloseMsg, 0, sizeof(TopicTaskCloseMessage));
+                    if (doc.HasMember("taskId")) {
+                      if (doc["taskId"].IsString() && doc["taskId"].GetStringLength()) {
+                        strcpy_s(taskCloseMsg.szTaskId, sizeof(taskCloseMsg.szTaskId), doc["taskId"].GetString());
+                      }
+                    }
+                    if (doc.HasMember("state")) {
+                      if (doc["state"].IsInt()) {
+                        taskCloseMsg.nClose = doc["state"].GetInt();
+                      }
+                    }
+                    if (doc.HasMember("datetime")) {
+                      if (doc["datetime"].IsString() && doc["datetime"].GetStringLength()) {
+                        taskCloseMsg.ulMessageTime = makeDatetime(doc["datetime"].GetString());
+                      }
+                    }
+                    if (strlen(taskCloseMsg.szTaskId) && taskCloseMsg.ulMessageTime > 0) {
+                      handleTopicTaskCloseMsg(&taskCloseMsg);
+                    }
+                    else {
+                      sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]parse topic task close message miss "
+                        "parameter, taskId=%s, state=%d, datetime=%lu, msgTopic=%s, msgSeq=%hu, msgUuid=%s, "
+                        "msgFrom=%s\r\n", __FUNCTION__, __LINE__, taskCloseMsg.szTaskId, taskCloseMsg.nClose,
+                        taskCloseMsg.ulMessageTime, pTopicMsg->szMsgMark, pTopicMsg->usMsgSequence,
+                        pTopicMsg->szMsgUuid, pTopicMsg->szMsgFrom);
+                      writeLog(szLog, pf_logger::eLOGCATEGORY_FAULT, m_usLogType);
+                    }
+                  }
+                  break;
 								}
 								default: {
 									sprintf_s(szLog, sizeof(szLog), "[access_service]%s[%d]parse task message subType not "
@@ -2153,7 +2175,7 @@ void expand_protocol::ExpandProtocolService::dealTopicMessage()
 												strncpy_s(pDevice->szOrganization, sizeof(pDevice->szOrganization),
 													device.szOrganization, strlen(device.szOrganization));
 												pDevice->deviceBasic.nBattery = 0;
-												pDevice->deviceBasic.nStatus = DEV_OFFLINE;
+												pDevice->deviceBasic.nStatus = DEV_ONLINE;
 												pDevice->deviceBasic.ulLastActiveTime = 0;
 												pDevice->nLastLocateType = 0;
 												pDevice->szBindGuard[0] = '\0';
@@ -2447,14 +2469,8 @@ void expand_protocol::ExpandProtocolService::handleTopicAliveMessage(TopicAliveM
 					bValidDevice = true;
 					pDevice->deviceBasic.ulLastActiveTime = pAliveMsg_->ulMessageTime;
 					pDevice->deviceBasic.nBattery = pAliveMsg_->usBattery;
-					if (pDevice->deviceBasic.nStatus == DEV_OFFLINE) {
-						pDevice->deviceBasic.nStatus = DEV_ONLINE;
-						if (pDevice->deviceBasic.nLooseStatus) {
-							pDevice->deviceBasic.nStatus += DEV_LOOSE;
-						}
-						if (pDevice->deviceBasic.nBattery < 20) {
-							pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
-						}
+					if (pDevice->deviceBasic.nOnline == 0) {
+						pDevice->deviceBasic.nOnline = 1;
 					}
 					if (strcmp(pAliveMsg_->szOrg, pDevice->szOrganization) != 0) {
 						strcpy_s(pDevice->szOrganization, sizeof(pDevice->szOrganization), pAliveMsg_->szOrg);
@@ -2492,14 +2508,8 @@ void expand_protocol::ExpandProtocolService::handleTopicOnlineMessage(TopicOnlin
 					bValidDevice = false;
 					pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
 					pDevice->deviceBasic.nBattery = pMsg_->usBattery;
-					if (pDevice->deviceBasic.nStatus == DEV_OFFLINE) {
-						pDevice->deviceBasic.nStatus = DEV_ONLINE;
-						if (pDevice->deviceBasic.nLooseStatus) {
-							pDevice->deviceBasic.nStatus += DEV_LOOSE;
-						}
-						if (pDevice->deviceBasic.nBattery < 20) {
-							pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
-						}
+					if (pDevice->deviceBasic.nOnline == 0) {
+						pDevice->deviceBasic.nOnline = 1;
 					}
 					if (strcmp(pMsg_->szOrg, pDevice->szOrganization) != 0) {
 						strcpy_s(pDevice->szOrganization, sizeof(pDevice->szOrganization), pMsg_->szOrg);
@@ -2528,10 +2538,12 @@ void expand_protocol::ExpandProtocolService::handleTopicOnlineMessage(TopicOnlin
 				pPubMsg[nLen] = '\0';
 				encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 				std::string strDestURI = DEFAULT_PUBLISH_DEST;
-				m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-				sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish device online to %s, deviceId=%s, battery=%hu,"
-					" datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->usBattery,
-					szDatetime);
+				if (m_pPubMsgProducer) {
+					m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+					sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish device online to %s, deviceId=%s, battery=%hu,"
+						" datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->usBattery,
+						szDatetime);
+				}
 				writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 				delete [] pPubMsg;
 				pPubMsg = NULL;
@@ -2554,8 +2566,9 @@ void expand_protocol::ExpandProtocolService::handleTopicOfflineMessage(TopicOffl
 			if (iter != m_deviceList.end()) {
 				WristletDevice * pDevice = iter->second;
 				if (pDevice) {
-					pDevice->deviceBasic.nStatus = 0;
-					pDevice->deviceBasic.nBattery = 0;
+					if (pDevice->deviceBasic.nOnline == 1) {
+						pDevice->deviceBasic.nOnline = 0;
+					}
 					bValidDevice = true;
 					sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal offline message, deviceId=%s, orgId=%s, "
 						"datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->szOrg, szDatetime);
@@ -2579,10 +2592,12 @@ void expand_protocol::ExpandProtocolService::handleTopicOfflineMessage(TopicOffl
 				pPubMsg[nLen] = '\0';
 				encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 				std::string strDestURI = DEFAULT_PUBLISH_DEST;
-				m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-				sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish device offline to %s, deviceId=%s, datetime=%s"
-					"\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, szDatetime);
-				writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+        if (m_pPubMsgProducer) {
+          m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+          sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish device offline to %s, deviceId=%s, "
+            "datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, szDatetime);
+          writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+        }
 				delete[] pPubMsg;
 				pPubMsg = NULL;
 			}
@@ -2602,14 +2617,8 @@ void expand_protocol::ExpandProtocolService::handleTopicDeviceBindMsg(TopicBindM
 				if (iter != m_deviceList.end()) {
 					WristletDevice * pDevice = iter->second;
 					if (pDevice) {
-						if (pDevice->deviceBasic.nStatus == DEV_OFFLINE) {
-							pDevice->deviceBasic.nStatus = DEV_ONLINE;
-							if (pDevice->deviceBasic.nLooseStatus) {
-								pDevice->deviceBasic.nStatus += DEV_LOOSE;
-							}
-							if (pDevice->deviceBasic.nBattery < 20) {
-								pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
-							}
+						if (pDevice->deviceBasic.nOnline == 0) {
+							pDevice->deviceBasic.nOnline = 1;
 						}
 						pDevice->deviceBasic.nBattery = pMsg_->usBattery;
 						pDevice->deviceBasic.ulLastActiveTime = pMsg_->ulMessageTime;
@@ -2717,14 +2726,14 @@ void expand_protocol::ExpandProtocolService::handleTopicTaskSubmitMsg(TopicTaskM
 				pthread_mutex_unlock(&m_mutex4GuarderList);
 			}
 			char szLog[512] = { 0 };
-			sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal submit task, taskId=%s, deviceId=%s, orgId=%s,"
-				" guarderId=%s, datetime=%lu\r\n", __FUNCTION__, __LINE__, pMsg_->szTaskId, pMsg_->szDeviceId,
-				pMsg_->szOrg, pMsg_->szGuarder, pMsg_->ulMessageTime);
+			sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal submit task, taskId=%s, deviceId=%s, "
+        "orgId=%s, guarderId=%s, datetime=%lu\r\n", __FUNCTION__, __LINE__, pMsg_->szTaskId, 
+        pMsg_->szDeviceId, pMsg_->szOrg, pMsg_->szGuarder, pMsg_->ulMessageTime);
 			writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 			char szPubMsg[512] = { 0 };
 			sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"taskId\":\"%s\",\"deviceId\":\"%s\","
-				"\"guarder\":\"%s\",\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_TASK_START, pMsg_->szTaskId, 
-				pMsg_->szDeviceId, pMsg_->szGuarder, szDatetime);
+				"\"guarder\":\"%s\",\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_TASK_START, 
+        pMsg_->szTaskId, pMsg_->szDeviceId, pMsg_->szGuarder, szDatetime);
 			std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
 			size_t nLen = strPubMsgUtf.size();
 			unsigned char * pPubMsg = new unsigned char[nLen + 1];
@@ -2732,18 +2741,21 @@ void expand_protocol::ExpandProtocolService::handleTopicTaskSubmitMsg(TopicTaskM
 			pPubMsg[nLen] = '\0';
 			encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 			std::string strDestURI = DEFAULT_PUBLISH_DEST;
-			m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-			sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish start task to %s, taskId=%s, deviceId=%s, "
-				"guarder=%s, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szTaskId,
-				pMsg_->szDeviceId, pMsg_->szGuarder, szDatetime);
-			writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-			delete [] pPubMsg;
+      if (m_pPubMsgProducer) {
+        m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+        sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish start task to %s, taskId=%s, "
+          "deviceId=%s, guarder=%s, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(),
+          pMsg_->szTaskId, pMsg_->szDeviceId, pMsg_->szGuarder, szDatetime);
+        writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+      }
+      delete [] pPubMsg;
 			pPubMsg = NULL;
 		}
 	}
 }
 
-void expand_protocol::ExpandProtocolService::handleTopicTaskModifyMsg(TopicTaskModifyMessage * pMsg_)
+void expand_protocol::ExpandProtocolService::handleTopicTaskModifyMsg(
+  TopicTaskModifyMessage * pMsg_)
 {
 	if (pMsg_ && strlen(pMsg_->szTaskId) && pMsg_->ulMessageTime > 0) {
 		std::string strTaskId = pMsg_->szTaskId;
@@ -2796,14 +2808,52 @@ void expand_protocol::ExpandProtocolService::handleTopicTaskCloseMsg(TopicTaskCl
 			m_taskList.erase(iter);
 		}
 		pthread_mutex_unlock(&m_mutex4TaskList);
+		if (strlen(szDeviceId)) {
+			pthread_mutex_lock(&m_mutex4DeviceList);
+			std::string strDeviceId = szDeviceId;
+			EscortDeviceList::iterator iter = m_deviceList.find(strDeviceId);
+			if (iter != m_deviceList.end()) {
+				WristletDevice * pDevice = iter->second;
+				if (pDevice) {
+					if (pDevice->deviceBasic.nOnline == 0) {
+						pDevice->deviceBasic.nOnline = 1;
+					}
+					pDevice->deviceBasic.nStatus = DEV_ONLINE;
+					if (pDevice->deviceBasic.nLooseStatus == 1) {
+						pDevice->deviceBasic.nStatus += DEV_LOOSE;
+					}
+					if (pDevice->deviceBasic.nBattery < BATTERY_THRESHOLD) {
+						pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
+					}
+					memset(pDevice->szBindGuard, 0, sizeof(pDevice->szBindGuard));
+					pDevice->ulBindTime = 0;
+				}
+			}
+			pthread_mutex_unlock(&m_mutex4DeviceList);
+		}
+		if (strlen(szGuarder)) {
+			std::string strGuarder = szGuarder;
+			pthread_mutex_lock(&m_mutex4GuarderList);
+			EscortGuarderList::iterator iter = m_guarderList.find(strGuarder);
+			if (iter != m_guarderList.end()) {
+				Guarder * pGuarder = iter->second;
+				if (pGuarder) {
+					pGuarder->usState = STATE_GUARDER_FREE;
+					memset(pGuarder->szTaskId, 0, sizeof(pGuarder->szTaskId));
+					memset(pGuarder->szTaskStartTime, 0, sizeof(pGuarder->szTaskStartTime));
+				}
+			}
+			pthread_mutex_unlock(&m_mutex4GuarderList);
+		}
 		char szLog[512] = { 0 };
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal topic task close, taskId=%s, deviceId=%s, guarder=%s,"
-			" datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szTaskId, szDeviceId, szGuarder, szDatetime);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal topic task close, taskId=%s, deviceId=%s,"
+      " guarder=%s, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szTaskId, szDeviceId, 
+      szGuarder, szDatetime);
 		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 		char szPubMsg[512] = { 0 };
-		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"taskId\":\"%s\",\"deviceId\":\"%s\",\"guarder\":\"%s\","
-			"\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_TASK_STOP, pMsg_->szTaskId, szDeviceId, szGuarder,
-			szDatetime);
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"taskId\":\"%s\",\"deviceId\":\"%s\","
+      "\"guarder\":\"%s\",\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_TASK_STOP, 
+      pMsg_->szTaskId, szDeviceId, szGuarder, szDatetime);
 		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
 		size_t nLen = strPubMsgUtf.size();
 		unsigned char * pPubMsg = new unsigned char[nLen + 1];
@@ -2811,19 +2861,23 @@ void expand_protocol::ExpandProtocolService::handleTopicTaskCloseMsg(TopicTaskCl
 		pPubMsg[nLen] = '\0';
 		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 		std::string strDestURI = DEFAULT_PUBLISH_DEST;
-		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish close task to %s, taskId=%s, deviceId=%s, guarder=%s,"
-			"datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szTaskId, szDeviceId, szGuarder, 
-			szDatetime);
-		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-		delete pPubMsg;
+    if (m_pPubMsgProducer) {
+      m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+      sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish close task to %s, taskId=%s, "
+        "deviceId=%s, guarder=%s, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), 
+        pMsg_->szTaskId, szDeviceId, szGuarder, szDatetime);
+      writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    }
+    delete pPubMsg;
 		pPubMsg = NULL;
 	}
 }
 
-void expand_protocol::ExpandProtocolService::handleTopicLocateAppMessage(TopicLocateMessageApp * pMsg_)
+void expand_protocol::ExpandProtocolService::handleTopicLocateAppMessage(
+  TopicLocateMessageApp * pMsg_)
 {
-	if (pMsg_ && strlen(pMsg_->szDeviceId) && strlen(pMsg_->szTaskId) && pMsg_->dLat > 0 && pMsg_->dLng > 0) {
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && strlen(pMsg_->szTaskId) && pMsg_->dLat > 0 
+    && pMsg_->dLng > 0) {
 		std::string strDeviceId = pMsg_->szDeviceId;
 		char szDatetime[20] = { 0 };
 		char szGuarder[20] = { 0 };
@@ -2847,15 +2901,17 @@ void expand_protocol::ExpandProtocolService::handleTopicLocateAppMessage(TopicLo
 		}
 		pthread_mutex_unlock(&m_mutex4DeviceList);
 		char szLog[512] = { 0 };
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal locate app message, deviceId=%s, taskId=%s, lat=%f, "
-			"lng=%f, coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->szTaskId,
-			pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal locate app message, deviceId=%s, "
+      "taskId=%s, lat=%f, lng=%f, coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, 
+      pMsg_->szDeviceId, pMsg_->szTaskId, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, 
+      szDatetime);
 		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 		char szPubMsg[512] = { 0 };
-		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"guarder\":\"%s\","
-			"\"taskId\":\"%s\",\"lat\":%f,\"lng\":%f,\"coordinate\":%d,\"datetime\":\"%s\"}",
-			escort_protocol::CMD_PUB_DEVICE_LOCATE, LOCATE_APP, pMsg_->szDeviceId, szGuarder, pMsg_->szTaskId,
-			pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\","
+      "\"guarder\":\"%s\",\"taskId\":\"%s\",\"lat\":%f,\"lng\":%f,\"coordinate\":%d,"
+      "\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_LOCATE, LOCATE_APP, 
+      pMsg_->szDeviceId, szGuarder, pMsg_->szTaskId, pMsg_->dLat, pMsg_->dLng, 
+      pMsg_->nCoordinate, szDatetime);
 		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
 		size_t nLen = strPubMsgUtf.size();
 		unsigned char * pPubMsg = new unsigned char[nLen + 1];
@@ -2863,19 +2919,24 @@ void expand_protocol::ExpandProtocolService::handleTopicLocateAppMessage(TopicLo
 		pPubMsg[nLen] = '\0';
 		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 		std::string strDestURI = DEFAULT_PUBLISH_DEST;
-		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish app locate to %s, deviceId=%s, taskId=%s, guarder=%s,"
-			" lat=%f, lng=%f, coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(),
-			pMsg_->szDeviceId, pMsg_->szTaskId, szGuarder, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
-		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    if (m_pPubMsgProducer) {
+      m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+      sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish app locate to %s, deviceId=%s,"
+        " taskId=%s, guarder=%s, lat=%f, lng=%f, coordinate=%d, datetime=%s\r\n", __FUNCTION__,
+        __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->szTaskId, szGuarder, 
+        pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
+      writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    }
 		delete[] pPubMsg;
 		pPubMsg = NULL;
 	}
 }
 
-void expand_protocol::ExpandProtocolService::handleTopicLocateGpsMessage(TopicLocateMessageGps * pMsg_)
+void expand_protocol::ExpandProtocolService::handleTopicLocateGpsMessage(
+  TopicLocateMessageGps * pMsg_)
 {
-	if (pMsg_ && strlen(pMsg_->szDeviceId) && pMsg_->dLat > 0.0 && pMsg_->dLng > 0.0 && pMsg_->ulMessageTime > 0) {
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && pMsg_->dLat > 0.0 && pMsg_->dLng > 0.0 
+    && pMsg_->ulMessageTime > 0) {
 		std::string strDeviceId = pMsg_->szDeviceId;
 		char szDatetime[20] = { 0 };
 		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
@@ -2899,15 +2960,17 @@ void expand_protocol::ExpandProtocolService::handleTopicLocateGpsMessage(TopicLo
 		}
 		pthread_mutex_unlock(&m_mutex4DeviceList);
 		char szLog[512] = { 0 };
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal locate gps message, deviceId=%s, lat=%f, lng=%f, "
-			"coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng,
-			pMsg_->nCoordinate, szDatetime);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal locate gps message, deviceId=%s,"
+      " lat=%f, lng=%f, coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, 
+      pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
 		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 		char szPubMsg[512] = { 0 };
-		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"lat\":%f,\"lng\":%f,"
-			"\"coordinate\":%d,\"sattelite\":%hu,\"intensity\":%hu,\"speed\":%f,\"direction\":%d,\"datetime\":\"%s\"}",
-			escort_protocol::CMD_PUB_DEVICE_LOCATE, LOCATE_GPS, pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng,
-			pMsg_->nCoordinate, pMsg_->usStattelite, pMsg_->usIntensity, pMsg_->dSpeed, pMsg_->nDirection, szDatetime);
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\","
+      "\"lat\":%f,\"lng\":%f,\"coordinate\":%d,\"sattelite\":%hu,\"intensity\":%hu,"
+      "\"speed\":%f,\"direction\":%d,\"datetime\":\"%s\"}",
+			escort_protocol::CMD_PUB_DEVICE_LOCATE, LOCATE_GPS, pMsg_->szDeviceId, pMsg_->dLat,
+      pMsg_->dLng, pMsg_->nCoordinate, pMsg_->usStattelite, pMsg_->usIntensity, pMsg_->dSpeed,
+      pMsg_->nDirection, szDatetime);
 		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
 		size_t nLen = strPubMsgUtf.size();
 		unsigned char * pPubMsg = new unsigned char[nLen + 1];
@@ -2915,20 +2978,25 @@ void expand_protocol::ExpandProtocolService::handleTopicLocateGpsMessage(TopicLo
 		pPubMsg[nLen] = '\0';
 		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 		std::string strDestURI = DEFAULT_PUBLISH_DEST;
-		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish gps locate to %s, deviceId=%s, lat=%f, lng=%f, "
-			"coordinate=%d, speed=%f, direction=%d, sattelite=%hu, intensity=%hu, datetime=%s\r\n", __FUNCTION__,
-			__LINE__, strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, 
-			pMsg_->dSpeed, pMsg_->nDirection, pMsg_->usStattelite, pMsg_->usIntensity, szDatetime);
-		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-		delete[] pPubMsg;
+    if (m_pPubMsgProducer) {
+      m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+      sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish gps locate to %s, deviceId=%s,"
+        " lat=%f, lng=%f, coordinate=%d, speed=%f, direction=%d, sattelite=%hu, intensity=%hu,"
+        " datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, 
+        pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, pMsg_->dSpeed, pMsg_->nDirection, 
+        pMsg_->usStattelite, pMsg_->usIntensity, szDatetime);
+      writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    }
+    delete[] pPubMsg;
 		pPubMsg = NULL;
 	}
 }
 
-void expand_protocol::ExpandProtocolService::handleTopicLocateLbsMessage(TopicLocateMessageLbs * pMsg_)
+void expand_protocol::ExpandProtocolService::handleTopicLocateLbsMessage(
+  TopicLocateMessageLbs * pMsg_)
 {
-	if (pMsg_ && strlen(pMsg_->szDeviceId) && pMsg_->dLat > 0.0 && pMsg_->dLng > 0.0 && pMsg_->ulMessageTime > 0) {
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && pMsg_->dLat > 0.0 && pMsg_->dLng > 0.0
+    && pMsg_->ulMessageTime > 0) {
 		std::string strDeviceId = pMsg_->szDeviceId;
 		char szDatetime[20] = { 0 };
 		formatDatetime(pMsg_->ulMessageTime, szDatetime, sizeof(szDatetime));
@@ -2952,14 +3020,15 @@ void expand_protocol::ExpandProtocolService::handleTopicLocateLbsMessage(TopicLo
 		}
 		pthread_mutex_unlock(&m_mutex4DeviceList);
 		char szLog[512] = { 0 };
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal locate lbs message, deviceId=%s, lat=%f, lng=%f, "
-			"coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng,
-			pMsg_->nCoordinate, szDatetime);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal locate lbs message, deviceId=%s,"
+      " lat=%f, lng=%f, coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, 
+      pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
 		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 		char szPubMsg[512] = { 0 };
-		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"lat\":%f,\"lng\":%f,"
-			"\"coordinate\":%d,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_LOCATE, LOCATE_LBS, 
-			pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\","
+      "\"lat\":%f,\"lng\":%f,\"coordinate\":%d,\"datetime\":\"%s\"}", 
+      escort_protocol::CMD_PUB_DEVICE_LOCATE, LOCATE_LBS, pMsg_->szDeviceId, pMsg_->dLat, 
+      pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
 		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
 		size_t nLen = strPubMsgUtf.size();
 		unsigned char * pPubMsg = new unsigned char[nLen + 1];
@@ -2967,17 +3036,21 @@ void expand_protocol::ExpandProtocolService::handleTopicLocateLbsMessage(TopicLo
 		pPubMsg[nLen] = '\0';
 		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 		std::string strDestURI = DEFAULT_PUBLISH_DEST;
-		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish gps locate to %s, deviceId=%s, lat=%f, lng=%f, "
-			"coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, 
-			pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate, szDatetime);
-		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    if (m_pPubMsgProducer) {
+      m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+      sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish gps locate to %s, deviceId=%s,"
+        " lat=%f, lng=%f, coordinate=%d, datetime=%s\r\n", __FUNCTION__, __LINE__, 
+        strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->dLat, pMsg_->dLng, pMsg_->nCoordinate,
+        szDatetime);
+      writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    }
 		delete[] pPubMsg;
 		pPubMsg = NULL;
 	}
 }
 
-void expand_protocol::ExpandProtocolService::handleTopicAlarmLowpowerMessage(TopicAlarmMessageLowpower * pMsg_)
+void expand_protocol::ExpandProtocolService::handleTopicAlarmLowpowerMessage(
+  TopicAlarmMessageLowpower * pMsg_)
 {
 	if (pMsg_ && strlen(pMsg_->szDeviceId)) {
 		std::string strDeviceId = pMsg_->szDeviceId;
@@ -2999,13 +3072,14 @@ void expand_protocol::ExpandProtocolService::handleTopicAlarmLowpowerMessage(Top
 		}
 		pthread_mutex_unlock(&m_mutex4DeviceList);
 		char szLog[512] = { 0 };
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alram lowpower message, deviceId=%s, battery=%hu, "
-			"mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode,
-			szDatetime);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alram lowpower message, deviceId=%s,"
+      " battery=%hu, mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, 
+      pMsg_->usBattery, pMsg_->usMode, szDatetime);
 		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 		char szPubMsg[512] = { 0 };
-		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"battery\":%hu,"
-			"\"mode\":%hu,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_ALARM, ALARM_DEVICE_LOWPOWER, 
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\","
+      "\"battery\":%hu,\"mode\":%hu,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_ALARM,
+      ALARM_DEVICE_LOWPOWER, 
 			pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode, szDatetime);
 		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
 		size_t nLen = strPubMsgUtf.size();
@@ -3014,17 +3088,20 @@ void expand_protocol::ExpandProtocolService::handleTopicAlarmLowpowerMessage(Top
 		pPubMsg[nLen] = '\0';
 		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 		std::string strDestURI = DEFAULT_PUBLISH_DEST;
-		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish alarm lowpower to %s, deviceId=%s, battery=%hu, "
-			"mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, 
-			pMsg_->usBattery, pMsg_->usMode, szDatetime);
-		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    if (m_pPubMsgProducer) {
+      m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+      sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish alarm lowpower to %s, deviceId=%s,"
+        " battery=%hu, mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), 
+        pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode, szDatetime);
+      writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    }
 		delete[] pPubMsg;
 		pPubMsg = NULL;
 	}
 }
 
-void expand_protocol::ExpandProtocolService::handleTopicAlarmLooseMsg(TopicAlarmMessageLoose * pMsg_)
+void expand_protocol::ExpandProtocolService::handleTopicAlarmLooseMsg(
+  TopicAlarmMessageLoose * pMsg_)
 {
 	if (pMsg_ && strlen(pMsg_->szDeviceId) && pMsg_->ulMessageTime > 0)  {
 		std::string strDeviceId = pMsg_->szDeviceId;
@@ -3041,24 +3118,29 @@ void expand_protocol::ExpandProtocolService::handleTopicAlarmLooseMsg(TopicAlarm
 					if (pMsg_->usMode == 0) {
 						pDevice->ulLastLooseAlertTime = pMsg_->ulMessageTime;
 						pDevice->deviceBasic.nLooseStatus = 1;
-						pDevice->deviceBasic.nStatus += DEV_LOOSE;
+						if ((pDevice->deviceBasic.nStatus & DEV_LOOSE) == 0) {
+							pDevice->deviceBasic.nStatus += DEV_LOOSE;
+						}
 					}
 					else {
 						pDevice->deviceBasic.nLooseStatus = 0;
-						pDevice->deviceBasic.nStatus -= DEV_LOOSE;
+						if ((pDevice->deviceBasic.nStatus & DEV_LOOSE) == DEV_LOOSE) {
+							pDevice->deviceBasic.nStatus -= DEV_LOOSE;
+						}
 					}
 				}
 			}
 		}
 		pthread_mutex_unlock(&m_mutex4DeviceList);
 		char szLog[512] = { 0 };
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alram loose message, deviceId=%s, battery=%hu, mode=%hu, "
-			"datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode, szDatetime);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alram loose message, deviceId=%s,"
+      " battery=%hu, mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, pMsg_->szDeviceId,
+      pMsg_->usBattery, pMsg_->usMode, szDatetime);
 		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 		char szPubMsg[512] = { 0 };
-		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"battery\":%hu,"
-			"\"mode\":%d,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_ALARM, ALARM_DEVICE_LOOSE, 
-			pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode, szDatetime);
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\","
+      "\"battery\":%hu,\"mode\":%d,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_ALARM,
+      ALARM_DEVICE_LOOSE, pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode, szDatetime);
 		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
 		size_t nLen = strPubMsgUtf.size();
 		unsigned char * pPubMsg = new unsigned char[nLen + 1];
@@ -3066,19 +3148,23 @@ void expand_protocol::ExpandProtocolService::handleTopicAlarmLooseMsg(TopicAlarm
 		pPubMsg[nLen] = '\0';
 		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 		std::string strDestURI = DEFAULT_PUBLISH_DEST;
-		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish loose message to %s, deviceId=%s, battery=%hu, mode=%hu,"
-			"datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->usBattery,
-			pMsg_->usMode, szDatetime);
-		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    if (m_pPubMsgProducer) {
+      m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+      sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish loose message to %s, deviceId=%s,"
+        " battery=%hu, mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(),
+        pMsg_->szDeviceId, pMsg_->usBattery, pMsg_->usMode, szDatetime);
+      writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    }
 		delete[] pPubMsg;
 		pPubMsg = NULL;
 	}
 }
 
-void expand_protocol::ExpandProtocolService::handleTopicAlarmFleeMsg(TopicAlarmMessageFlee * pMsg_)
+void expand_protocol::ExpandProtocolService::handleTopicAlarmFleeMsg(
+  TopicAlarmMessageFlee * pMsg_)
 {
-	if (pMsg_ && strlen(pMsg_->szDeviceId) && strlen(pMsg_->szTaskId) && pMsg_->ulMessageTime > 0) {
+	if (pMsg_ && strlen(pMsg_->szDeviceId) && strlen(pMsg_->szTaskId) 
+    && pMsg_->ulMessageTime > 0) {
 		std::string strDeviceId = pMsg_->szDeviceId;
 		std::string strTaskId = pMsg_->szTaskId;
 		char szDatetime[20] = { 0 };
@@ -3127,15 +3213,15 @@ void expand_protocol::ExpandProtocolService::handleTopicAlarmFleeMsg(TopicAlarmM
 			pthread_mutex_unlock(&m_mutex4TaskList);
 		}
 		char szLog[512] = { 0 };
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alarm flee, deviceId=%s, taskId=%s, mode=%hu, "
-			"guarder=%s, datetime=%s", __FUNCTION__, __LINE__, pMsg_->szDeviceId, pMsg_->szTaskId, pMsg_->usMode,
-			pMsg_->szGuarder, szDatetime);
+		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deal alarm flee, deviceId=%s, taskId=%s,"
+      " mode=%hu, guarder=%s, datetime=%s", __FUNCTION__, __LINE__, pMsg_->szDeviceId, 
+      pMsg_->szTaskId, pMsg_->usMode, pMsg_->szGuarder, szDatetime);
 		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
 		char szPubMsg[512] = { 0 };
-		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\",\"taskId\":\"%s\","
-			"\"guarder\":\"%s\",\"mode\":%hu,\"battery\":%hu,\"datetime\":\"%s\"}", escort_protocol::CMD_PUB_DEVICE_ALARM,
-			ALARM_DEVICE_FLEE, pMsg_->szDeviceId, pMsg_->szTaskId, pMsg_->szGuarder, pMsg_->usMode, pMsg_->usBattery,
-			szDatetime);
+		sprintf_s(szPubMsg, sizeof(szPubMsg), "{\"cmd\":%d,\"subType\":%d,\"deviceId\":\"%s\","
+      "\"taskId\":\"%s\",\"guarder\":\"%s\",\"mode\":%hu,\"battery\":%hu,\"datetime\":\"%s\"}",
+      escort_protocol::CMD_PUB_DEVICE_ALARM, ALARM_DEVICE_FLEE, pMsg_->szDeviceId, 
+      pMsg_->szTaskId, pMsg_->szGuarder, pMsg_->usMode, pMsg_->usBattery, szDatetime);
 		std::string strPubMsgUtf = AnsiToUtf8(szPubMsg);
 		size_t nLen = strPubMsgUtf.size();
 		unsigned char * pPubMsg = new unsigned char[nLen + 1];
@@ -3143,17 +3229,21 @@ void expand_protocol::ExpandProtocolService::handleTopicAlarmFleeMsg(TopicAlarmM
 		pPubMsg[nLen] = '\0';
 		encryptMessage(pPubMsg, 0, nLen, kPubSafeKey);
 		std::string strDestURI = DEFAULT_PUBLISH_DEST;
-		m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen);
-		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish flee message to %s, deviceId=%s, taskId=%s, guarder=%s "
-			" battery=%hu, mode=%hu, datetime=%s\r\n", __FUNCTION__, __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, 
-			pMsg_->szTaskId, pMsg_->szGuarder, pMsg_->usBattery, pMsg_->usMode, szDatetime);
-		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    if (m_pPubMsgProducer) {
+      m_pPubMsgProducer->send(strDestURI, pPubMsg, nLen, true);
+      sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]publish flee message to %s, deviceId=%s, "
+        "taskId=%s, guarder=%s  battery=%hu, mode=%hu, datetime=%s\r\n", __FUNCTION__, 
+        __LINE__, strDestURI.c_str(), pMsg_->szDeviceId, pMsg_->szTaskId, pMsg_->szGuarder, 
+        pMsg_->usBattery, pMsg_->usMode, szDatetime);
+      writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+    }
 		delete[] pPubMsg;
 		pPubMsg = NULL;
 	}
 }
 
-void expand_protocol::ExpandProtocolService::handleTopicAlarmLocateLostMsg(TopicAlarmMessageLocateLost * pMsg_)
+void expand_protocol::ExpandProtocolService::handleTopicAlarmLocateLostMsg(
+  TopicAlarmMessageLocateLost * pMsg_)
 {
 
 }
@@ -3284,475 +3374,482 @@ void expand_protocol::ExpandProtocolService::dealInteractMessage()
 									if (nGetType && nRetCount > 0) {
 										if (doc.HasMember("list")) {
 											switch (nGetType) {
-											case BUFFER_ORG: {
-												pthread_mutex_lock(&m_mutex4OrgList);
-												for (int i = 0; i < nRetCount; i++) {
-													Organization org;
-													memset(&org, 0, sizeof(org));
-													if (doc["list"][i].HasMember("orgId")) {
-														if (doc["list"][i]["orgId"].IsString()
-															&& doc["list"][i]["orgId"].GetStringLength()) {
-															strcpy_s(org.szOrgId, sizeof(org.szOrgId),
-																doc["list"][i]["orgId"].GetString());
+											  case BUFFER_ORG: {
+												  pthread_mutex_lock(&m_mutex4OrgList);
+												  for (int i = 0; i < nRetCount; i++) {
+													  Organization org;
+													  memset(&org, 0, sizeof(org));
+													  if (doc["list"][i].HasMember("orgId")) {
+														  if (doc["list"][i]["orgId"].IsString()
+															  && doc["list"][i]["orgId"].GetStringLength()) {
+															  strcpy_s(org.szOrgId, sizeof(org.szOrgId),
+																  doc["list"][i]["orgId"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("orgName")) {
+														  if (doc["list"][i]["orgName"].IsString()
+															  && doc["list"][i]["orgName"].GetStringLength()) {
+															  strcpy_s(org.szOrgName, sizeof(org.szOrgName),
+																  doc["list"][i]["orgName"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("parentId")) {
+														  if (doc["list"][i]["parentId"].IsString()
+															  && doc["list"][i]["parentId"].GetStringLength()) {
+															  strcpy_s(org.szParentOrgId, sizeof(org.szParentOrgId),
+																  doc["list"][i]["parentId"].GetString());
+														  }
+													  }
+													  if (strlen(org.szOrgId)) {
+														  OrganizationEx * pOrg = new OrganizationEx();
+														  memcpy_s(&pOrg->org, sizeof(Organization), &org, sizeof(Organization));
+														  std::string strOrgId = org.szOrgId;
+														  m_orgList.emplace(strOrgId, pOrg);
+														  sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load org, orgId=%s, orgName=%s,"
+															  " parentId=%s\r\n", __FUNCTION__, __LINE__, org.szOrgId, org.szOrgName,
+															  org.szParentOrgId);
+														  writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+													  }
+													  else {
+														  sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load org parameter miss, "
+															  "orgId=%s, orgName=%s, parentId=%s\r\n", __FUNCTION__, __LINE__,
+															  org.szOrgId, org.szOrgName, org.szParentOrgId);
+														  writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+													  }
+												  }
+												  pthread_mutex_unlock(&m_mutex4OrgList);
+												  setLoadOrgList(true);
+												  reloadOrgList(false);
+												  break;
+											  }
+											  case BUFFER_DEVICE: {
+												  size_t nDeviceSize = sizeof(WristletDevice);
+												  pthread_mutex_lock(&m_mutex4DeviceList);
+												  for (int i = 0; i < nRetCount; i++) {
+													  WristletDevice device;
+													  memset(&device, 0, nDeviceSize);
+													  if (doc["list"][i].HasMember("factoryId")) {
+														  if (doc["list"][i]["factoryId"].IsString()
+															  && doc["list"][i]["factoryId"].GetStringLength()) {
+															  strcpy_s(device.deviceBasic.szFactoryId,
+																  sizeof(device.deviceBasic.szFactoryId),
+																  doc["list"][i]["factoryId"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("deviceId")) {
+														  if (doc["list"][i]["deviceId"].IsString()
+															  && doc["list"][i]["deviceId"].GetStringLength()) {
+															  strcpy_s(device.deviceBasic.szDeviceId,
+																  sizeof(device.deviceBasic.szDeviceId),
+																  doc["list"][i]["deviceId"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("status")) {
+														  if (doc["list"][i]["status"].IsUint()) {
+															  device.deviceBasic.nStatus =
+																  (unsigned short)doc["list"][i]["status"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("battery")) {
+														  if (doc["list"][i]["battery"].IsUint()) {
+															  device.deviceBasic.nBattery = (unsigned short)doc["list"][i]["battery"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("loose")) {
+														  if (doc["list"][i]["loose"].IsUint()) {
+															  device.deviceBasic.nLooseStatus = (unsigned short)doc["list"][i]["loose"].GetUint();
+														  }
+													  }
+														if (doc["list"][i].HasMember("online")) {
+															if (doc["list"][i]["online"].IsUint()) {
+																device.deviceBasic.nOnline = (unsigned short)doc["list"][i]["online"].GetUint();
+															}
 														}
-													}
-													if (doc["list"][i].HasMember("orgName")) {
-														if (doc["list"][i]["orgName"].IsString()
-															&& doc["list"][i]["orgName"].GetStringLength()) {
-															strcpy_s(org.szOrgName, sizeof(org.szOrgName),
-																doc["list"][i]["orgName"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("parentId")) {
-														if (doc["list"][i]["parentId"].IsString()
-															&& doc["list"][i]["parentId"].GetStringLength()) {
-															strcpy_s(org.szParentOrgId, sizeof(org.szParentOrgId),
-																doc["list"][i]["parentId"].GetString());
-														}
-													}
-													if (strlen(org.szOrgId)) {
-														OrganizationEx * pOrg = new OrganizationEx();
-														memcpy_s(&pOrg->org, sizeof(Organization), &org, sizeof(Organization));
-														std::string strOrgId = org.szOrgId;
-														m_orgList.emplace(strOrgId, pOrg);
-														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load org, orgId=%s, orgName=%s,"
-															" parentId=%s\r\n", __FUNCTION__, __LINE__, org.szOrgId, org.szOrgName,
-															org.szParentOrgId);
-														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-													}
-													else {
-														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load org parameter miss, "
-															"orgId=%s, orgName=%s, parentId=%s\r\n", __FUNCTION__, __LINE__,
-															org.szOrgId, org.szOrgName, org.szParentOrgId);
-														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-													}
-												}
-												pthread_mutex_unlock(&m_mutex4OrgList);
-												setLoadOrgList(true);
-												reloadOrgList(false);
-												break;
-											}
-											case BUFFER_DEVICE: {
-												size_t nDeviceSize = sizeof(WristletDevice);
-												pthread_mutex_lock(&m_mutex4DeviceList);
-												for (int i = 0; i < nRetCount; i++) {
-													WristletDevice device;
-													memset(&device, 0, nDeviceSize);
-													if (doc["list"][i].HasMember("factoryId")) {
-														if (doc["list"][i]["factoryId"].IsString()
-															&& doc["list"][i]["factoryId"].GetStringLength()) {
-															strcpy_s(device.deviceBasic.szFactoryId,
-																sizeof(device.deviceBasic.szFactoryId),
-																doc["list"][i]["factoryId"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("deviceId")) {
-														if (doc["list"][i]["deviceId"].IsString()
-															&& doc["list"][i]["deviceId"].GetStringLength()) {
-															strcpy_s(device.deviceBasic.szDeviceId,
-																sizeof(device.deviceBasic.szDeviceId),
-																doc["list"][i]["deviceId"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("status")) {
-														if (doc["list"][i]["status"].IsUint()) {
-															device.deviceBasic.nStatus =
-																(unsigned short)doc["list"][i]["status"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("battery")) {
-														if (doc["list"][i]["battery"].IsUint()) {
-															device.deviceBasic.nBattery = (uint8_t)doc["list"][i]["battery"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("loose")) {
-														if (doc["list"][i]["loose"].IsUint()) {
-															device.deviceBasic.nLooseStatus = (uint8_t)doc["list"][i]["loose"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("lastActiveTime")) {
-														if (doc["list"][i]["lastActiveTime"].IsUint()) {
-															device.deviceBasic.ulLastActiveTime =
-																(unsigned long)doc["list"][i]["lastActiveTime"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("link")) {
-														if (doc["list"][i]["link"].IsString()
-															&& doc["list"][i]["link"].GetStringLength()) {
-															strcpy_s(device.szLinkId, sizeof(device.szLinkId),
-																doc["list"][i]["link"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("org")) {
-														if (doc["list"][i]["org"].IsString()
-															&& doc["list"][i]["org"].GetStringLength()) {
-															strcpy_s(device.szOrganization, sizeof(device.szOrganization),
-																doc["list"][i]["org"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("lastLocateType")) {
-														if (doc["list"][i]["lastLocateType"].IsUint()) {
-															device.nLastLocateType = doc["list"][i]["lastLocateType"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("lastDeviceLocateTime")) {
-														if (doc["list"][i]["lastDeviceLocateTime"].IsUint()) {
-															device.ulLastDeviceLocateTime =
-																(unsigned long)doc["list"][i]["lastDeviceLocateTime"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("lastGuarderLocateTime")) {
-														if (doc["list"][i]["lastGuarderLocateTime"].IsUint()) {
-															device.ulLastGuarderLocateTime =
-																(unsigned long)doc["list"][i]["lastGuarderLocateTime"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("lastLowpowerAlertTime")) {
-														if (doc["list"][i]["lastLowpowerAlertTime"].IsUint()) {
-															device.ulLastLowPowerAlertTime =
-																(unsigned long)doc["list"][i]["lastLowpowerAlertTime"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("lastLooseAlertTime")) {
-														if (doc["list"][i]["lastLooseAlertTime"].IsUint()) {
-															device.ulLastLooseAlertTime =
-																(unsigned long)doc["list"][i]["lastLooseAlertTime"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("lastFleeAlertTime")) {
-														if (doc["list"][i]["lastFleeAlertTime"].IsUint()) {
-															device.ulLastFleeAlertTime =
-																(unsigned long)doc["list"][i]["lastFleeAlertTime"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("bindTime")) {
-														if (doc["list"][i]["bindTime"].IsUint()) {
-															device.ulBindTime = (unsigned long)doc["list"][i]["bindTime"].GetUint();
-														}
-													}
-													if (doc["list"][i].HasMember("bindGuarder")) {
-														if (doc["list"][i]["bindGuarder"].IsString()
-															&& doc["list"][i]["bindGuarder"].GetStringLength()) {
-															strcpy_s(device.szBindGuard, sizeof(device.szBindGuard),
-																doc["list"][i]["bindGuarder"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("devLat")) {
-														if (doc["list"][i]["devLat"].IsDouble()) {
-															device.devicePosition.dLatitude = doc["list"][i]["devLat"].GetDouble();
-														}
-													}
-													if (doc["list"][i].HasMember("devLng")) {
-														if (doc["list"][i]["devLng"].IsDouble()) {
-															device.devicePosition.dLngitude = doc["list"][i]["devLng"].GetDouble();
-														}
-													}
-													if (doc["list"][i].HasMember("devCoordinate")) {
-														if (doc["list"][i]["devCoordinate"].IsInt()) {
-															device.devicePosition.nCoordinate = doc["list"][i]["devCoordinate"].GetInt();
-														}
-													}
-													if (doc["list"][i].HasMember("guarderLat")) {
-														if (doc["list"][i]["guarderLat"].IsDouble()) {
-															device.guardPosition.dLatitude = doc["list"][i]["guarderLat"].GetDouble();
-														}
-													}
-													if (doc["list"][i].HasMember("guarderLng")) {
-														if (doc["list"][i]["guarderLng"].IsDouble()) {
-															device.guardPosition.dLngitude = doc["list"][i]["guarderLng"].GetDouble();
-														}
-													}
-													if (doc["list"][i].HasMember("guarderCoordinate")) {
-														if (doc["list"][i]["guarderCoordinate"].IsInt()) {
-															device.guardPosition.nCoordinate =
-																doc["list"][i]["guarderCoordinate"].GetInt();
-														}
-													}
-													if (doc["list"][i].HasMember("imei")) {
-														if (doc["list"][i]["imei"].IsString()
-															&& doc["list"][i]["imei"].GetStringLength()) {
-															strcpy_s(device.deviceBasic.szDeviceImei,
-																sizeof(device.deviceBasic.szDeviceImei),
-																doc["list"][i]["imei"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("mnc")) {
-														if (doc["list"][i]["mnc"].IsInt()) {
-															device.deviceBasic.nDeviceMnc = doc["list"][i]["mnc"].GetInt();
-														}
-													}
-													if (doc["list"][i].HasMember("fenceHave")) {
-														if (doc["list"][i]["fenceHave"].IsInt()) {
-															device.nDeviceHasFence = doc["list"][i]["fenceHave"].GetInt();
-														}
-													}
-													if (doc["list"][i].HasMember("fenceAlarm")) {
-														if (doc["list"][i]["fenceAlarm"].IsInt()) {
-															device.nDeviceFenceState = doc["list"][i]["fenceAlarm"].GetInt();
-														}
-													}
-													if (strlen(device.deviceBasic.szDeviceId)
-														&& strlen(device.deviceBasic.szFactoryId)) {
-														WristletDevice * pDevice = new WristletDevice();
-														memcpy_s(pDevice, nDeviceSize, &device, nDeviceSize);
-														pDevice->devicePosition.usLatType = pDevice->devicePosition.usLngType = 1;
-														pDevice->guardPosition.usLatType = pDevice->guardPosition.usLngType = 1;
-														std::string strDeviceId = (std::string)pDevice->deviceBasic.szDeviceId;
-														m_deviceList.emplace(strDeviceId, pDevice);
-														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load device, id=%s, factory=%s,"
-															" org=%s, status=%hu, battery=%hu, imei=%s, mnc=%d\r\n", __FUNCTION__,
-															__LINE__, pDevice->deviceBasic.szDeviceId, pDevice->deviceBasic.szFactoryId,
-															pDevice->szOrganization, pDevice->deviceBasic.nStatus,
-															pDevice->deviceBasic.nBattery, pDevice->deviceBasic.szDeviceImei,
-															pDevice->deviceBasic.nDeviceMnc);
-														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-													}
-													else {
-														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load device data miss, id=%s, "
-															"factory=%s, org=%s, status=%hu, battery=%hu, imei=%s, mnc=%d\r\n",
-															__FUNCTION__, __LINE__, device.deviceBasic.szDeviceId,
-															device.deviceBasic.szFactoryId, device.szOrganization,
-															device.deviceBasic.nStatus, device.deviceBasic.nBattery,
-															device.deviceBasic.szDeviceImei, device.deviceBasic.nDeviceMnc);
-														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-													}
-												}
-												pthread_mutex_unlock(&m_mutex4DeviceList);
-												setLoadDeviceList(true);
-												break;
-											}
-											case BUFFER_GUARDER: {
-												size_t nGuarderSize = sizeof(Guarder);
-												Guarder guarder;
-												memset(&guarder, 0, nGuarderSize);
-												for (int i = 0; i < nRetCount; i++) {
-													if (doc["list"][i].HasMember("id")) {
-														if (doc["list"][i]["id"].IsString()
-															&& doc["list"][i]["id"].GetStringLength()) {
-															strcpy_s(guarder.szId, sizeof(guarder.szId),
-																doc["list"][i]["id"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("name")) {
-														if (doc["list"][i]["name"].IsString()
-															&& doc["list"][i]["name"].GetStringLength()) {
-															strcpy_s(guarder.szTagName, sizeof(guarder.szTagName),
-																doc["list"][i]["name"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("password")) {
-														if (doc["list"][i]["password"].IsString()
-															&& doc["list"][i]["password"].GetStringLength()) {
-															strcpy_s(guarder.szPassword, sizeof(guarder.szPassword),
-																doc["list"][i]["password"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("org")) {
-														if (doc["list"][i]["org"].IsString()
-															&& doc["list"][i]["org"].GetStringLength()) {
-															strcpy_s(guarder.szOrg, sizeof(guarder.szOrg),
-																doc["list"][i]["org"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("state")) {
-														if (doc["list"][i]["state"].IsInt()) {
-															guarder.usState = (unsigned short)doc["list"][i]["state"].GetInt();
-														}
-													}
-													if (doc["list"][i].HasMember("roleType")) {
-														if (doc["list"][i]["roleType"].IsInt()) {
-															guarder.usRoleType = (unsigned short)doc["list"][i]["roleType"].GetInt();
-														}
-													}
-													if (doc["list"][i].HasMember("session")) {
-														if (doc["list"][i]["session"].IsString()
-															&& doc["list"][i]["session"].GetStringLength()) {
-															strcpy_s(guarder.szCurrentSession, sizeof(guarder.szCurrentSession),
-																doc["list"][i]["session"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("device")) {
-														if (doc["list"][i]["device"].IsString()
-															&& doc["list"][i]["device"].GetStringLength()) {
-															strcpy_s(guarder.szBindDevice, sizeof(guarder.szBindDevice),
-																doc["list"][i]["device"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("task")) {
-														if (doc["list"][i]["task"].IsString()
-															&& doc["list"][i]["task"].GetStringLength()) {
-															strcpy_s(guarder.szTaskId, sizeof(guarder.szTaskId),
-																doc["list"][i]["task"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("taskStartTime")) {
-														if (doc["list"][i]["taskStartTime"].IsString()
-															&& doc["list"][i]["taskStartTime"].GetStringLength()) {
-															strcpy_s(guarder.szTaskStartTime, sizeof(guarder.szTaskStartTime),
-																doc["list"][i]["taskStartTime"].GetString());
-														}
+														if (doc["list"][i].HasMember("lastActiveTime")) {
+														  if (doc["list"][i]["lastActiveTime"].IsUint()) {
+															  device.deviceBasic.ulLastActiveTime =
+																  (unsigned long)doc["list"][i]["lastActiveTime"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("link")) {
+														  if (doc["list"][i]["link"].IsString()
+															  && doc["list"][i]["link"].GetStringLength()) {
+															  strcpy_s(device.szLinkId, sizeof(device.szLinkId),
+																  doc["list"][i]["link"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("org")) {
+														  if (doc["list"][i]["org"].IsString()
+															  && doc["list"][i]["org"].GetStringLength()) {
+															  strcpy_s(device.szOrganization, sizeof(device.szOrganization),
+																  doc["list"][i]["org"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("lastLocateType")) {
+														  if (doc["list"][i]["lastLocateType"].IsUint()) {
+															  device.nLastLocateType = doc["list"][i]["lastLocateType"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("lastDeviceLocateTime")) {
+														  if (doc["list"][i]["lastDeviceLocateTime"].IsUint()) {
+															  device.ulLastDeviceLocateTime =
+																  (unsigned long)doc["list"][i]["lastDeviceLocateTime"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("lastGuarderLocateTime")) {
+														  if (doc["list"][i]["lastGuarderLocateTime"].IsUint()) {
+															  device.ulLastGuarderLocateTime =
+																  (unsigned long)doc["list"][i]["lastGuarderLocateTime"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("lastLowpowerAlertTime")) {
+														  if (doc["list"][i]["lastLowpowerAlertTime"].IsUint()) {
+															  device.ulLastLowPowerAlertTime =
+																  (unsigned long)doc["list"][i]["lastLowpowerAlertTime"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("lastLooseAlertTime")) {
+														  if (doc["list"][i]["lastLooseAlertTime"].IsUint()) {
+															  device.ulLastLooseAlertTime =
+																  (unsigned long)doc["list"][i]["lastLooseAlertTime"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("lastFleeAlertTime")) {
+														  if (doc["list"][i]["lastFleeAlertTime"].IsUint()) {
+															  device.ulLastFleeAlertTime =
+																  (unsigned long)doc["list"][i]["lastFleeAlertTime"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("bindTime")) {
+														  if (doc["list"][i]["bindTime"].IsUint()) {
+															  device.ulBindTime = (unsigned long)doc["list"][i]["bindTime"].GetUint();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("bindGuarder")) {
+														  if (doc["list"][i]["bindGuarder"].IsString()
+															  && doc["list"][i]["bindGuarder"].GetStringLength()) {
+															  strcpy_s(device.szBindGuard, sizeof(device.szBindGuard),
+																  doc["list"][i]["bindGuarder"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("devLat")) {
+														  if (doc["list"][i]["devLat"].IsDouble()) {
+															  device.devicePosition.dLatitude = doc["list"][i]["devLat"].GetDouble();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("devLng")) {
+														  if (doc["list"][i]["devLng"].IsDouble()) {
+															  device.devicePosition.dLngitude = doc["list"][i]["devLng"].GetDouble();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("devCoordinate")) {
+														  if (doc["list"][i]["devCoordinate"].IsInt()) {
+															  device.devicePosition.nCoordinate = doc["list"][i]["devCoordinate"].GetInt();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("guarderLat")) {
+														  if (doc["list"][i]["guarderLat"].IsDouble()) {
+															  device.guardPosition.dLatitude = doc["list"][i]["guarderLat"].GetDouble();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("guarderLng")) {
+														  if (doc["list"][i]["guarderLng"].IsDouble()) {
+															  device.guardPosition.dLngitude = doc["list"][i]["guarderLng"].GetDouble();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("guarderCoordinate")) {
+														  if (doc["list"][i]["guarderCoordinate"].IsInt()) {
+															  device.guardPosition.nCoordinate =
+																  doc["list"][i]["guarderCoordinate"].GetInt();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("imei")) {
+														  if (doc["list"][i]["imei"].IsString()
+															  && doc["list"][i]["imei"].GetStringLength()) {
+															  strcpy_s(device.deviceBasic.szDeviceImei,
+																  sizeof(device.deviceBasic.szDeviceImei),
+																  doc["list"][i]["imei"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("mnc")) {
+														  if (doc["list"][i]["mnc"].IsInt()) {
+															  device.deviceBasic.nDeviceMnc = doc["list"][i]["mnc"].GetInt();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("fenceHave")) {
+														  if (doc["list"][i]["fenceHave"].IsInt()) {
+															  device.nDeviceHasFence = doc["list"][i]["fenceHave"].GetInt();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("fenceAlarm")) {
+														  if (doc["list"][i]["fenceAlarm"].IsInt()) {
+															  device.nDeviceFenceState = doc["list"][i]["fenceAlarm"].GetInt();
+														  }
+													  }
+													  if (strlen(device.deviceBasic.szDeviceId)
+														  && strlen(device.deviceBasic.szFactoryId)) {
+														  WristletDevice * pDevice = new WristletDevice();
+														  memcpy_s(pDevice, nDeviceSize, &device, nDeviceSize);
+														  pDevice->devicePosition.usLatType = pDevice->devicePosition.usLngType = 1;
+														  pDevice->guardPosition.usLatType = pDevice->guardPosition.usLngType = 1;
+														  std::string strDeviceId = (std::string)pDevice->deviceBasic.szDeviceId;
+														  m_deviceList.emplace(strDeviceId, pDevice);
+														  sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load device, id=%s, factory=%s,"
+															  " org=%s, status=%hu, online=%hu, battery=%hu, imei=%s, mnc=%d\r\n", 
+																__FUNCTION__, __LINE__, pDevice->deviceBasic.szDeviceId, 
+																pDevice->deviceBasic.szFactoryId, pDevice->szOrganization, 
+																pDevice->deviceBasic.nStatus, pDevice->deviceBasic.nOnline,
+															  pDevice->deviceBasic.nBattery, pDevice->deviceBasic.szDeviceImei,
+															  pDevice->deviceBasic.nDeviceMnc);
+														  writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+													  }
+													  else {
+														  sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load device data miss, id=%s, "
+															  "factory=%s, org=%s, status=%hu, online=%hu, battery=%hu, imei=%s, mnc=%d\r\n",
+															  __FUNCTION__, __LINE__, device.deviceBasic.szDeviceId,
+															  device.deviceBasic.szFactoryId, device.szOrganization,
+															  device.deviceBasic.nStatus, device.deviceBasic.nOnline, 
+																device.deviceBasic.nBattery, device.deviceBasic.szDeviceImei, 
+																device.deviceBasic.nDeviceMnc);
+														  writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+													  }
+												  }
+												  pthread_mutex_unlock(&m_mutex4DeviceList);
+												  setLoadDeviceList(true);
+												  break;
+											  }
+											  case BUFFER_GUARDER: {
+												  size_t nGuarderSize = sizeof(Guarder);
+												  Guarder guarder;
+												  memset(&guarder, 0, nGuarderSize);
+												  for (int i = 0; i < nRetCount; i++) {
+													  if (doc["list"][i].HasMember("id")) {
+														  if (doc["list"][i]["id"].IsString()
+															  && doc["list"][i]["id"].GetStringLength()) {
+															  strcpy_s(guarder.szId, sizeof(guarder.szId),
+																  doc["list"][i]["id"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("name")) {
+														  if (doc["list"][i]["name"].IsString()
+															  && doc["list"][i]["name"].GetStringLength()) {
+															  strcpy_s(guarder.szTagName, sizeof(guarder.szTagName),
+																  doc["list"][i]["name"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("password")) {
+														  if (doc["list"][i]["password"].IsString()
+															  && doc["list"][i]["password"].GetStringLength()) {
+															  strcpy_s(guarder.szPassword, sizeof(guarder.szPassword),
+																  doc["list"][i]["password"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("org")) {
+														  if (doc["list"][i]["org"].IsString()
+															  && doc["list"][i]["org"].GetStringLength()) {
+															  strcpy_s(guarder.szOrg, sizeof(guarder.szOrg),
+																  doc["list"][i]["org"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("state")) {
+														  if (doc["list"][i]["state"].IsInt()) {
+															  guarder.usState = (unsigned short)doc["list"][i]["state"].GetInt();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("roleType")) {
+														  if (doc["list"][i]["roleType"].IsInt()) {
+															  guarder.usRoleType = (unsigned short)doc["list"][i]["roleType"].GetInt();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("session")) {
+														  if (doc["list"][i]["session"].IsString()
+															  && doc["list"][i]["session"].GetStringLength()) {
+															  strcpy_s(guarder.szCurrentSession, sizeof(guarder.szCurrentSession),
+																  doc["list"][i]["session"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("device")) {
+														  if (doc["list"][i]["device"].IsString()
+															  && doc["list"][i]["device"].GetStringLength()) {
+															  strcpy_s(guarder.szBindDevice, sizeof(guarder.szBindDevice),
+																  doc["list"][i]["device"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("task")) {
+														  if (doc["list"][i]["task"].IsString()
+															  && doc["list"][i]["task"].GetStringLength()) {
+															  strcpy_s(guarder.szTaskId, sizeof(guarder.szTaskId),
+																  doc["list"][i]["task"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("taskStartTime")) {
+														  if (doc["list"][i]["taskStartTime"].IsString()
+															  && doc["list"][i]["taskStartTime"].GetStringLength()) {
+															  strcpy_s(guarder.szTaskStartTime, sizeof(guarder.szTaskStartTime),
+																  doc["list"][i]["taskStartTime"].GetString());
+														  }
 
-													}
-													if (doc["list"][i].HasMember("link")) {
-														if (doc["list"][i]["link"].IsString()
-															&& doc["list"][i]["link"].GetStringLength()) {
-															strcpy_s(guarder.szLink, sizeof(guarder.szLink),
-																doc["list"][i]["guarder"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("phone")) {
-														if (doc["list"][i]["phone"].IsString()
-															&& doc["list"][i]["phone"].GetStringLength()) {
-															strcpy_s(guarder.szPhoneCode, sizeof(guarder.szPhoneCode),
-																doc["list"][i]["phone"].GetString());
-														}
-													}
-													if (strlen(guarder.szId) && strlen(guarder.szTagName)
-														&& strlen(guarder.szPassword)) {
-														Guarder * pGuarder = new Guarder();
-														memset(pGuarder, 0, nGuarderSize);
-														memcpy_s(pGuarder, nGuarderSize, &guarder, nGuarderSize);
-														m_guarderList.emplace((std::string)pGuarder->szId, pGuarder);
-														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load guarder, id=%s, name=%s,"
-															" roleType=%hu, state=%hu, session=%s, org=%s, device=%s, task=%s, "
-															"startTime=%s\r\n", __FUNCTION__, __LINE__, guarder.szId, guarder.szTagName, 
-															guarder.usRoleType, guarder.usState, guarder.szCurrentSession, guarder.szOrg,
-															guarder.szBindDevice, guarder.szTaskId, guarder.szTaskStartTime);
-														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-													}
-													else {
-														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load guarder data miss, id=%s,"
-															" name=%s, roleType=%hu, state=%hu, session=%s, org=%s, device=%s, task=%s, "
-															"startTime=%s\r\n", __FUNCTION__, __LINE__, guarder.szId, guarder.szTagName, 
-															guarder.usRoleType, guarder.usState, guarder.szCurrentSession, guarder.szOrg,
-															guarder.szBindDevice, guarder.szTaskId, guarder.szTaskStartTime);
-														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-													}
-												}
-												setLoadGuarderList(true);
-												break;
-											}
-											case BUFFER_TASK: {
-												size_t nTaskSize = sizeof(EscortTask);
-												for (int i = 0; i < nRetCount; i++) {
-													EscortTask task;
-													memset(&task, 0, sizeof(EscortTask));
-													if (doc["list"][i].HasMember("taskId")) {
-														if (doc["list"][i]["taskId"].IsString()
-															&& doc["list"][i]["taskId"].GetStringLength()) {
-															strcpy_s(task.szTaskId, sizeof(task.szTaskId),
-																doc["list"][i]["taskId"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("taskType")) {
-														if (doc["list"][i]["taskType"].IsInt()) {
-															task.nTaskType = (uint8_t)doc["list"][i]["taskType"].GetInt();
-														}
-													}
-													if (doc["list"][i].HasMember("taskLimit")) {
-														if (doc["list"][i]["taskLimit"].IsInt()) {
-															task.nTaskLimitDistance = (uint8_t)doc["list"][i]["taskLimit"].GetInt();
-														}
-													}
-													if (doc["list"][i].HasMember("taskFlee")) {
-														if (doc["list"][i]["taskFlee"].IsInt()) {
-															task.nTaskFlee = (uint8_t)doc["list"][i]["taskFlee"].GetInt();
-														}
-													}
-													if (doc["list"][i].HasMember("guarder")) {
-														if (doc["list"][i]["guarder"].IsString()
-															&& doc["list"][i]["guarder"].GetStringLength()) {
-															strcpy_s(task.szGuarder, sizeof(task.szGuarder),
-																doc["list"][i]["guarder"].GetString());
-														}
+													  }
+													  if (doc["list"][i].HasMember("link")) {
+														  if (doc["list"][i]["link"].IsString()
+															  && doc["list"][i]["link"].GetStringLength()) {
+															  strcpy_s(guarder.szLink, sizeof(guarder.szLink),
+																  doc["list"][i]["guarder"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("phone")) {
+														  if (doc["list"][i]["phone"].IsString()
+															  && doc["list"][i]["phone"].GetStringLength()) {
+															  strcpy_s(guarder.szPhoneCode, sizeof(guarder.szPhoneCode),
+																  doc["list"][i]["phone"].GetString());
+														  }
+													  }
+													  if (strlen(guarder.szId) && strlen(guarder.szTagName)
+														  && strlen(guarder.szPassword)) {
+														  Guarder * pGuarder = new Guarder();
+														  memset(pGuarder, 0, nGuarderSize);
+														  memcpy_s(pGuarder, nGuarderSize, &guarder, nGuarderSize);
+														  m_guarderList.emplace((std::string)pGuarder->szId, pGuarder);
+														  sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load guarder, id=%s, name=%s,"
+															  " roleType=%hu, state=%hu, session=%s, org=%s, device=%s, task=%s, "
+															  "startTime=%s\r\n", __FUNCTION__, __LINE__, guarder.szId, guarder.szTagName, 
+															  guarder.usRoleType, guarder.usState, guarder.szCurrentSession, guarder.szOrg,
+															  guarder.szBindDevice, guarder.szTaskId, guarder.szTaskStartTime);
+														  writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+													  }
+													  else {
+														  sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load guarder data miss, id=%s,"
+															  " name=%s, roleType=%hu, state=%hu, session=%s, org=%s, device=%s, task=%s, "
+															  "startTime=%s\r\n", __FUNCTION__, __LINE__, guarder.szId, guarder.szTagName, 
+															  guarder.usRoleType, guarder.usState, guarder.szCurrentSession, guarder.szOrg,
+															  guarder.szBindDevice, guarder.szTaskId, guarder.szTaskStartTime);
+														  writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+													  }
+												  }
+												  setLoadGuarderList(true);
+												  break;
+											  }
+											  case BUFFER_TASK: {
+												  size_t nTaskSize = sizeof(EscortTask);
+												  for (int i = 0; i < nRetCount; i++) {
+													  EscortTask task;
+													  memset(&task, 0, sizeof(EscortTask));
+													  if (doc["list"][i].HasMember("taskId")) {
+														  if (doc["list"][i]["taskId"].IsString()
+															  && doc["list"][i]["taskId"].GetStringLength()) {
+															  strcpy_s(task.szTaskId, sizeof(task.szTaskId),
+																  doc["list"][i]["taskId"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("taskType")) {
+														  if (doc["list"][i]["taskType"].IsInt()) {
+															  task.nTaskType = (uint8_t)doc["list"][i]["taskType"].GetInt();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("taskLimit")) {
+														  if (doc["list"][i]["taskLimit"].IsInt()) {
+															  task.nTaskLimitDistance = (uint8_t)doc["list"][i]["taskLimit"].GetInt();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("taskFlee")) {
+														  if (doc["list"][i]["taskFlee"].IsInt()) {
+															  task.nTaskFlee = (uint8_t)doc["list"][i]["taskFlee"].GetInt();
+														  }
+													  }
+													  if (doc["list"][i].HasMember("guarder")) {
+														  if (doc["list"][i]["guarder"].IsString()
+															  && doc["list"][i]["guarder"].GetStringLength()) {
+															  strcpy_s(task.szGuarder, sizeof(task.szGuarder),
+																  doc["list"][i]["guarder"].GetString());
+														  }
 
-													}
-													if (doc["list"][i].HasMember("factoryId")) {
-														if (doc["list"][i]["factoryId"].IsString()
-															&& doc["list"][i]["factoryId"].GetStringLength()) {
-															strcpy_s(task.szFactoryId, sizeof(task.szFactoryId),
-																doc["list"][i]["factoryId"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("deviceId")) {
-														if (doc["list"][i]["deviceId"].IsString()
-															&& doc["list"][i]["deviceId"].GetStringLength()) {
-															strcpy_s(task.szDeviceId, sizeof(task.szDeviceId),
-																doc["list"][i]["deviceId"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("orgId")) {
-														if (doc["list"][i]["orgId"].IsString()
-															&& doc["list"][i]["orgId"].GetStringLength()) {
-															strcpy_s(task.szOrg, sizeof(task.szOrg),
-																doc["list"][i]["orgId"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("taskStartTime")) {
-														if (doc["list"][i]["taskStartTime"].IsString()
-															&& doc["list"][i]["taskStartTime"].GetStringLength()) {
-															strcpy_s(task.szTaskStartTime, sizeof(task.szTaskStartTime),
-																doc["list"][0]["taskStartTime"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("target")) {
-														if (doc["list"][i]["target"].IsString()
-															&& doc["list"][i]["target"].GetStringLength()) {
-															strcpy_s(task.szTarget, sizeof(task.szTarget),
-																doc["list"][i]["target"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("destination")) {
-														if (doc["list"][i]["destination"].IsString()
-															&& doc["list"][i]["destination"].GetStringLength()) {
-															strcpy_s(task.szDestination, sizeof(task.szDestination),
-																doc["list"][i]["destination"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("handset")) {
-														if (doc["list"][i]["handset"].IsString()
-															&& doc["list"][i]["handset"].GetStringLength()) {
-															strcpy_s(task.szTarget, sizeof(task.szTarget),
-																doc["list"][i]["handset"].GetString());
-														}
-													}
-													if (doc["list"][i].HasMember("taskMode")) {
-														if (doc["list"][i]["taskMode"].IsInt()) {
-															task.nTaskMode = doc["list"][i]["taskMode"].GetInt();
-														}
-													}
-													if (strlen(task.szTaskId) && strlen(task.szGuarder)
-														&& strlen(task.szDeviceId) && strlen(task.szTaskStartTime)) {
-														EscortTask * pTask = new EscortTask();
-														memcpy_s(pTask, nTaskSize, &task, nTaskSize);
-														m_taskList.emplace((std::string)pTask->szTaskId, pTask);
-														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load task taskId=%s, "
-															"device=%s, gaurder=%s, org=%s, startTime=%s, type=%d, limit=%d, "
-															"target=%s, destination=%s, flee=%d, handset=%s\r\n", __FUNCTION__,
-															__LINE__, task.szTaskId, task.szDeviceId, task.szGuarder, task.szOrg,
-															task.szTaskStartTime, task.nTaskType, task.nTaskLimitDistance,
-															task.szTarget, task.szDestination, task.nTaskFlee, task.szHandset);
-														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-													}
-													else {
-														sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load task data miss, "
-															"taskId=%s, device=%s, gaurder=%s, org=%s, startTime=%s, type=%d, limit=%d,"
-															" target=%s, destination=%s, flee=%d, handset=%s\r\n", __FUNCTION__,
-															__LINE__, task.szTaskId, task.szDeviceId, task.szGuarder, task.szOrg,
-															task.szTaskStartTime, task.nTaskType, task.nTaskLimitDistance,
-															task.szTarget, task.szDestination, task.nTaskFlee, task.szHandset);
-														writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-													}
-												}
-												setLoadTaskList(true);
-												break;
-											}
-											default: {
-												sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]subGetInfo not used buffer "
-													"type for %d\r\n", __FUNCTION__, __LINE__, nGetType);
-												writeLog(szLog, pf_logger::eLOGCATEGORY_WARN, m_usLogType);
-												break;
-											}
+													  }
+													  if (doc["list"][i].HasMember("factoryId")) {
+														  if (doc["list"][i]["factoryId"].IsString()
+															  && doc["list"][i]["factoryId"].GetStringLength()) {
+															  strcpy_s(task.szFactoryId, sizeof(task.szFactoryId),
+																  doc["list"][i]["factoryId"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("deviceId")) {
+														  if (doc["list"][i]["deviceId"].IsString()
+															  && doc["list"][i]["deviceId"].GetStringLength()) {
+															  strcpy_s(task.szDeviceId, sizeof(task.szDeviceId),
+																  doc["list"][i]["deviceId"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("orgId")) {
+														  if (doc["list"][i]["orgId"].IsString()
+															  && doc["list"][i]["orgId"].GetStringLength()) {
+															  strcpy_s(task.szOrg, sizeof(task.szOrg),
+																  doc["list"][i]["orgId"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("taskStartTime")) {
+														  if (doc["list"][i]["taskStartTime"].IsString()
+															  && doc["list"][i]["taskStartTime"].GetStringLength()) {
+															  strcpy_s(task.szTaskStartTime, sizeof(task.szTaskStartTime),
+																  doc["list"][0]["taskStartTime"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("target")) {
+														  if (doc["list"][i]["target"].IsString()
+															  && doc["list"][i]["target"].GetStringLength()) {
+															  strcpy_s(task.szTarget, sizeof(task.szTarget),
+																  doc["list"][i]["target"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("destination")) {
+														  if (doc["list"][i]["destination"].IsString()
+															  && doc["list"][i]["destination"].GetStringLength()) {
+															  strcpy_s(task.szDestination, sizeof(task.szDestination),
+																  doc["list"][i]["destination"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("handset")) {
+														  if (doc["list"][i]["handset"].IsString()
+															  && doc["list"][i]["handset"].GetStringLength()) {
+															  strcpy_s(task.szTarget, sizeof(task.szTarget),
+																  doc["list"][i]["handset"].GetString());
+														  }
+													  }
+													  if (doc["list"][i].HasMember("taskMode")) {
+														  if (doc["list"][i]["taskMode"].IsInt()) {
+															  task.nTaskMode = doc["list"][i]["taskMode"].GetInt();
+														  }
+													  }
+													  if (strlen(task.szTaskId) && strlen(task.szGuarder)
+														  && strlen(task.szDeviceId) && strlen(task.szTaskStartTime)) {
+														  EscortTask * pTask = new EscortTask();
+														  memcpy_s(pTask, nTaskSize, &task, nTaskSize);
+														  m_taskList.emplace((std::string)pTask->szTaskId, pTask);
+														  sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load task taskId=%s, "
+															  "device=%s, gaurder=%s, org=%s, startTime=%s, type=%d, limit=%d, "
+															  "target=%s, destination=%s, flee=%d, handset=%s\r\n", __FUNCTION__,
+															  __LINE__, task.szTaskId, task.szDeviceId, task.szGuarder, task.szOrg,
+															  task.szTaskStartTime, task.nTaskType, task.nTaskLimitDistance,
+															  task.szTarget, task.szDestination, task.nTaskFlee, task.szHandset);
+														  writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+													  }
+													  else {
+														  sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]load task data miss, "
+															  "taskId=%s, device=%s, gaurder=%s, org=%s, startTime=%s, type=%d, limit=%d,"
+															  " target=%s, destination=%s, flee=%d, handset=%s\r\n", __FUNCTION__,
+															  __LINE__, task.szTaskId, task.szDeviceId, task.szGuarder, task.szOrg,
+															  task.szTaskStartTime, task.nTaskType, task.nTaskLimitDistance,
+															  task.szTarget, task.szDestination, task.nTaskFlee, task.szHandset);
+														  writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
+													  }
+												  }
+												  setLoadTaskList(true);
+												  break;
+											  }
+											  default: {
+												  sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]subGetInfo not used buffer "
+													  "type for %d\r\n", __FUNCTION__, __LINE__, nGetType);
+												  writeLog(szLog, pf_logger::eLOGCATEGORY_WARN, m_usLogType);
+												  break;
+											  }
 											}
 										}
 									}
@@ -3896,41 +3993,49 @@ void expand_protocol::ExpandProtocolService::handleTaskStart(expand_protocol::Re
 		char szOrg[40] = { 0 };
 		char szExistGuarder[20] = { 0 };
 		if (getLoadGuarderList()) {
-			pthread_mutex_lock(&m_mutex4GuarderList);
-			expand_protocol::EscortGuarderList::iterator iter = m_guarderList.find(strGuarder);
-			if (iter != m_guarderList.end()) {
-				Guarder * pGuarder = iter->second;
-				if (pGuarder) {
-					if (pGuarder->usState == 0) {
-						bValidGuarder = true;
-					}
-					else {
-						if (strlen(pGuarder->szTaskId)) {
-							strcpy_s(szTaskId, sizeof(szTaskId), pGuarder->szTaskId);
-							strcpy_s(szExistDeviceId, sizeof(szExistDeviceId), pGuarder->szBindDevice);
-							result = escort_protocol::ERROR_GUARDER_ALREADY_ON_DUTY;
+			unsigned long ulReqTime = makeDatetime(pReqStartTask_->szRequestTime);
+			unsigned long ulNow = (unsigned long)time(NULL);
+			if (abs((double)ulNow - ulReqTime) <= 90) {
+				pthread_mutex_lock(&m_mutex4GuarderList);
+				expand_protocol::EscortGuarderList::iterator iter = m_guarderList.find(strGuarder);
+				if (iter != m_guarderList.end()) {
+					Guarder * pGuarder = iter->second;
+					if (pGuarder) {
+						if (pGuarder->usState == 0) {
+							bValidGuarder = true;
 						}
 						else {
-							if (strlen(pGuarder->szBindDevice)) {
-								if (strcmp(pGuarder->szBindDevice, pReqStartTask_->szDeviceId) != 0) {
-									strcpy_s(szExistDeviceId, sizeof(szExistDeviceId), pGuarder->szBindDevice);
-									result = escort_protocol::ERROR_GUARDER_ALREADY_BIND_DEVICE;
-								}
-								else {
-									bValidGuarder = true;
-								}
+							if (strlen(pGuarder->szTaskId)) {
+								strcpy_s(szTaskId, sizeof(szTaskId), pGuarder->szTaskId);
+								strcpy_s(szExistDeviceId, sizeof(szExistDeviceId), pGuarder->szBindDevice);
+								strcpy_s(szExistGuarder, sizeof(szExistGuarder), pGuarder->szId);
+								result = escort_protocol::ERROR_GUARDER_ALREADY_ON_DUTY;
 							}
 							else {
-								result = escort_protocol::ERROR_DEVICE_IS_INVALID;
+								if (strlen(pGuarder->szBindDevice)) {
+									if (strcmp(pGuarder->szBindDevice, pReqStartTask_->szDeviceId) != 0) {
+										strcpy_s(szExistDeviceId, sizeof(szExistDeviceId), pGuarder->szBindDevice);
+										result = escort_protocol::ERROR_GUARDER_ALREADY_BIND_DEVICE;
+									}
+									else {
+										bValidGuarder = true;
+									}
+								}
+								else {
+									result = escort_protocol::ERROR_DEVICE_IS_INVALID;
+								}
 							}
 						}
 					}
 				}
+				else {
+					result = escort_protocol::ERROR_GUARDER_IS_INVALID;
+				}
+				pthread_mutex_unlock(&m_mutex4GuarderList);
 			}
 			else {
-				result = escort_protocol::ERROR_GUARDER_IS_INVALID;
+				result = escort_protocol::ERROR_REQUEST_TIME_EXPIRED;
 			}
-			pthread_mutex_unlock(&m_mutex4GuarderList);
 		}
 		else {
 			result = escort_protocol::ERROR_GUARDER_LIST_NOT_LOAD;
@@ -3942,32 +4047,34 @@ void expand_protocol::ExpandProtocolService::handleTaskStart(expand_protocol::Re
 				if (iter != m_deviceList.end()) {
 					WristletDevice * pDevice = iter->second;
 					if (pDevice) {
-						if ((pDevice->deviceBasic.nStatus & DEV_GUARD) == DEV_GUARD
-							|| (pDevice->deviceBasic.nStatus & DEV_FLEE) == DEV_FLEE) {
-							if (strcmp(pDevice->szBindGuard, pReqStartTask_->szGuarderId) == 0) {
-								result = escort_protocol::ERROR_GUARDER_ALREADY_ON_DUTY;
-							}
-							else {
-								strcpy_s(szExistGuarder, sizeof(szExistGuarder), pDevice->szBindGuard);
-								result = escort_protocol::ERROR_DEVICE_IS_OCCUPIED;
-							}
+						if (pDevice->deviceBasic.nOnline == 0) {
+							result = escort_protocol::ERROR_DEVICE_IS_OFFLINE;
 						}
-						else if ((pDevice->deviceBasic.nStatus & DEV_ONLINE) == DEV_ONLINE) {
-							if (strlen(pDevice->szBindGuard)) {
+						else {
+							if ((pDevice->deviceBasic.nStatus & DEV_GUARD) == DEV_GUARD
+								|| (pDevice->deviceBasic.nStatus & DEV_FLEE) == DEV_FLEE) {
 								if (strcmp(pDevice->szBindGuard, pReqStartTask_->szGuarderId) == 0) {
-									bGenerateTaskId = true;
+									result = escort_protocol::ERROR_GUARDER_ALREADY_ON_DUTY;
 								}
 								else {
-									result = escort_protocol::ERROR_DEVICE_IS_OCCUPIED;
 									strcpy_s(szExistGuarder, sizeof(szExistGuarder), pDevice->szBindGuard);
+									result = escort_protocol::ERROR_DEVICE_IS_OCCUPIED;
 								}
 							}
-							else {
-								bGenerateTaskId = true;
+							else if ((pDevice->deviceBasic.nStatus & DEV_ONLINE) == DEV_ONLINE) {
+								if (strlen(pDevice->szBindGuard)) {
+									if (strcmp(pDevice->szBindGuard, pReqStartTask_->szGuarderId) == 0) {
+										bGenerateTaskId = true;
+									}
+									else {
+										result = escort_protocol::ERROR_DEVICE_IS_OCCUPIED;
+										strcpy_s(szExistGuarder, sizeof(szExistGuarder), pDevice->szBindGuard);
+									}
+								}
+								else {
+									bGenerateTaskId = true;
+								}
 							}
-						}
-						else if (pDevice->deviceBasic.nStatus == DEV_OFFLINE) {
-							result = escort_protocol::ERROR_DEVICE_IS_OFFLINE;
 						}
 					}
 				}
@@ -3993,6 +4100,7 @@ void expand_protocol::ExpandProtocolService::handleTaskStart(expand_protocol::Re
 				if (iter != m_guarderList.end()) {
 					Guarder * pGuarder = iter->second;
 					if (pGuarder) {
+						pGuarder->usState = STATE_GUARDER_DUTY;
 						strcpy_s(pGuarder->szBindDevice, sizeof(pGuarder->szBindDevice), pReqStartTask_->szDeviceId);
 						strcpy_s(pGuarder->szTaskId, sizeof(pGuarder->szTaskId), szTaskId);
 						strcpy_s(pGuarder->szTaskStartTime, sizeof(pGuarder->szTaskStartTime), pReqStartTask_->szRequestTime);
@@ -4052,19 +4160,22 @@ void expand_protocol::ExpandProtocolService::handleTaskStart(expand_protocol::Re
 		char szReply[512] = { 0 };
 		std::string strDestURI = strDest_;
 		if (strDestURI.empty()) {
-			strDestURI = DEFAULT_LISTEN_DEST;
+			strDestURI = DEFAULT_REPLY_DEST;
 		}
-		sprintf_s(szReply, sizeof(szReply), "{\"cmd\":%hu,\"retcode\":%d,\"seq\":%hu,\"taskId\":\"%s\","
-			"\"deviceId\":\"%s\",\"guarder\":\"%s\",\"reqTime\":\"%s\"}", escort_protocol::CMD_START_TASK_REQ,
+		sprintf_s(szReply, sizeof(szReply), "{\"cmd\":%hu,\"retCode\":%d,\"seq\":%hu,\"taskId\":\"%s\","
+			"\"deviceId\":\"%s\",\"guarder\":\"%s\",\"reqTime\":\"%s\"}", escort_protocol::CMD_START_TASK_REP,
 			result, pReqStartTask_->usReqSeq, szTaskId, szExistDeviceId, szExistGuarder,
 			pReqStartTask_->szRequestTime);
 		std::string strReplyUtf = AnsiToUtf8(szReply);
+
+    //m_pRepMsgProducer->send("test_reply", strReplyUtf, false);
+
 		size_t nLen = strReplyUtf.size();
 		unsigned char * pReplyData = new unsigned char[nLen + 1];
 		memcpy_s(pReplyData, nLen + 1, strReplyUtf.c_str(), nLen);
 		pReplyData[nLen] = '\0';
 		encryptMessage(pReplyData, 0, nLen, kRepSafeKey);
-		m_pRepMsgProducer->send(strDestURI, pReplyData, nLen);
+		m_pRepMsgProducer->send(strDestURI, pReplyData, nLen, false);
 		char szLog[512] = { 0 };
 		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]deviceId=%s, guarder=%s, target=%s, destination=%s, "
 			"reqSeq=%hu, reqDatetime=%s, taskType=%hu, taskLimit=%hu, taskId=%s, retcode=%d\r\n", __FUNCTION__,
@@ -4086,34 +4197,41 @@ void expand_protocol::ExpandProtocolService::handleTaskStop(expand_protocol::Req
 		char szGuarderId[20] = { 0 };
 		char szFactoryId[4] = { 0 };
 		int result;
-		pthread_mutex_lock(&m_mutex4TaskList);
-		if (!m_taskList.empty()) {
-			expand_protocol::EscortTaskList::iterator iter = m_taskList.find(strTaskId);
-			if (iter != m_taskList.end()) {
-				EscortTask * pTask = iter->second;
-				if (pTask) {
-					if (pTask->nTaskFlee == 1) {
-						result = escort_protocol::ERROR_TASK_IN_WARN_SITUATION;
-					}
-					else {
-						result = escort_protocol::ERROR_NO;
-						strcpy_s(szDeviceId, sizeof(szDeviceId), pTask->szDeviceId);
-						strcpy_s(szFactoryId, sizeof(szFactoryId), pTask->szFactoryId);
-						strcpy_s(szGuarderId, sizeof(szGuarderId), pTask->szGuarder);
-						delete pTask;
-						pTask = NULL;
-						m_taskList.erase(iter);
+		unsigned long ulReqTime = makeDatetime(pReqStopTask_->szRequestTime);
+		unsigned long ulNow = (unsigned long)time(NULL);
+		if (abs((double)ulNow - ulReqTime) <= 90.0) {
+			pthread_mutex_lock(&m_mutex4TaskList);
+			if (!m_taskList.empty()) {
+				expand_protocol::EscortTaskList::iterator iter = m_taskList.find(strTaskId);
+				if (iter != m_taskList.end()) {
+					EscortTask * pTask = iter->second;
+					if (pTask) {
+						if (pTask->nTaskFlee == 1) {
+							result = escort_protocol::ERROR_TASK_IN_WARN_SITUATION;
+						}
+						else {
+							result = escort_protocol::ERROR_NO;
+							strcpy_s(szDeviceId, sizeof(szDeviceId), pTask->szDeviceId);
+							strcpy_s(szFactoryId, sizeof(szFactoryId), pTask->szFactoryId);
+							strcpy_s(szGuarderId, sizeof(szGuarderId), pTask->szGuarder);
+							delete pTask;
+							pTask = NULL;
+							m_taskList.erase(iter);
+						}
 					}
 				}
-			} 
+				else {
+					result = escort_protocol::ERROR_TASK_NOT_EXISTS;
+				}
+			}
 			else {
 				result = escort_protocol::ERROR_TASK_NOT_EXISTS;
 			}
+			pthread_mutex_unlock(&m_mutex4TaskList);
 		}
 		else {
-			result = escort_protocol::ERROR_TASK_NOT_EXISTS;
+			result = escort_protocol::ERROR_REQUEST_TIME_EXPIRED;
 		}
-		pthread_mutex_unlock(&m_mutex4TaskList);
 		if (strlen(szGuarderId)) {
 			std::string strGuarder = szGuarderId;
 			pthread_mutex_lock(&m_mutex4GuarderList);
@@ -4124,6 +4242,7 @@ void expand_protocol::ExpandProtocolService::handleTaskStop(expand_protocol::Req
 					pGuarder->usState = STATE_GUARDER_FREE;
 					memset(pGuarder->szTaskId, 0, sizeof(pGuarder->szTaskId));
 					memset(pGuarder->szTaskStartTime, 0, sizeof(pGuarder->szTaskStartTime));
+					memset(pGuarder->szBindDevice, 0, sizeof(pGuarder->szBindDevice));
 				}
 			}
 			pthread_mutex_unlock(&m_mutex4GuarderList);
@@ -4137,8 +4256,12 @@ void expand_protocol::ExpandProtocolService::handleTaskStop(expand_protocol::Req
 				if (pDevice) {
 					memset(pDevice->szBindGuard, 0, sizeof(pDevice->szBindGuard));
 					pDevice->ulBindTime = 0;
-					if ((pDevice->deviceBasic.nStatus & DEV_GUARD) == DEV_GUARD) {
-						pDevice->deviceBasic.nStatus = pDevice->deviceBasic.nStatus - DEV_GUARD + DEV_ONLINE;
+					pDevice->deviceBasic.nStatus = DEV_ONLINE;
+					if (pDevice->deviceBasic.nBattery < BATTERY_THRESHOLD) {
+						pDevice->deviceBasic.nStatus += DEV_LOWPOWER;
+					}
+					if (pDevice->deviceBasic.nLooseStatus == 1) {
+						pDevice->deviceBasic.nStatus += DEV_LOOSE;
 					}
 				}
 			}
@@ -4154,31 +4277,33 @@ void expand_protocol::ExpandProtocolService::handleTaskStop(expand_protocol::Req
 			char szUnbindMsg[512] = { 0 };
 			sprintf_s(szUnbindMsg, sizeof(szUnbindMsg), "{\"mark\":\"EC\",\"version\":\"10\",\"type\":%d,"
 				"\"sequence\":%u,\"datetime\":\"%s\",\"report\":[{\"subType\":%d,\"factoryId\":\"%s\","
-				"\"deviceId\":\"%s\",\"guarder\":\"%s\"}]}", MSG_SUB_REPORT, getNextInteractSequence(), 
+				"\"deviceId\":\"%s\",\"guarder\":\"%s\"}]}", MSG_SUB_REPORT, getNextInteractSequence(),
 				pReqStopTask_->szRequestTime, SUB_REPORT_DEVICE_UNBIND, szFactoryId, szDeviceId, szGuarderId);
 			sendInteractionMessage(szUnbindMsg, strlen(szUnbindMsg));
 		}
+
 		char szReply[512] = { 0 };
 		std::string strDestURI = strDest_;
 		if (strDestURI.empty()) {
-			strDestURI = DEFAULT_LISTEN_DEST;
+			strDestURI = DEFAULT_REPLY_DEST;
 		}
-		sprintf_s(szReply, sizeof(szReply), "{\"cmd\":%d,\"retcode\":%d,\"seq\":%u,\"reqTime\":\"%s\","
-			"\"taskId\":\"%s\"}", escort_protocol::CMD_STOP_TASK_REQ, result, pReqStopTask_->usReqSeq,
-			pReqStopTask_->szRequestTime, pReqStopTask_->szTaskId);
+		sprintf_s(szReply, sizeof(szReply), "{\"cmd\":%d,\"retCode\":%d,\"seq\":%u,\"reqTime\":\"%s\","
+			"\"taskId\":\"%s\",\"guarder\":\"%s\",\"deviceId\":\"%s\"}", escort_protocol::CMD_STOP_TASK_REP,
+			result, pReqStopTask_->usReqSeq, pReqStopTask_->szRequestTime, pReqStopTask_->szTaskId,
+			szGuarderId, szDeviceId);
 		std::string strReplyUtf = AnsiToUtf8(szReply);
 		size_t nLen = strReplyUtf.size();
 		unsigned char * pReplyData = new unsigned char[nLen + 1];
 		memcpy_s(pReplyData, nLen + 1, strReplyUtf.c_str(), nLen);
 		pReplyData[nLen] = '\0';
 		encryptMessage(pReplyData, 0, nLen, kRepSafeKey);
-		m_pRepMsgProducer->send(strDestURI, pReplyData, nLen);
+		m_pRepMsgProducer->send(strDestURI, pReplyData, nLen, false);
 		char szLog[512] = { 0 };
 		sprintf_s(szLog, sizeof(szLog), "[Broker]%s[%d]taskId=%s, deviceId=%s, guarderId=%s, datetime=%s, "
 			"seq=%hu\r\n", __FUNCTION__, __LINE__, pReqStopTask_->szTaskId, szDeviceId, szGuarderId,
 			pReqStopTask_->szRequestTime, pReqStopTask_->usReqSeq);
 		writeLog(szLog, pf_logger::eLOGCATEGORY_INFO, m_usLogType);
-		delete [] pReplyData;
+		delete[] pReplyData;
 		pReplyData = NULL;
 	}
 }

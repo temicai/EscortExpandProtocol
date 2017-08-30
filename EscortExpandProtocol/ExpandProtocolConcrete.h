@@ -189,8 +189,8 @@ namespace expand_protocol
 		SimpleProducer(const std::string & strBrokerURI, bool bClientAck = false);
 		virtual ~SimpleProducer();
 		void close();
-		void send(std::string strDest, unsigned char * pData, unsigned int uiDataLen);
-		void send(std::string strDest, std::string strData);
+		void send(std::string strDest, unsigned char * pData, unsigned int uiDataLen, bool bTopic = false);
+		void send(std::string strDest, std::string strData, bool bTopic = false);
 		virtual void run();
 	};
 
