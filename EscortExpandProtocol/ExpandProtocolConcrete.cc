@@ -3620,9 +3620,9 @@ void expand_protocol::ExpandProtocolService::dealInteractMessage()
 											  }
 											  case BUFFER_GUARDER: {
 												  size_t nGuarderSize = sizeof(Guarder);
-												  Guarder guarder;
-												  memset(&guarder, 0, nGuarderSize);
 												  for (int i = 0; i < nRetCount; i++) {
+														Guarder guarder;
+														memset(&guarder, 0, nGuarderSize);
 													  if (doc["list"][i].HasMember("id")) {
 														  if (doc["list"][i]["id"].IsString()
 															  && doc["list"][i]["id"].GetStringLength()) {
